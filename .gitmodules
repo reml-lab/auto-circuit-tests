@@ -1,0 +1,3 @@
+[submodule "auto-circuit"]
+	path = auto-circuit
+	url = git@github.com:oliveradk/auto-circuit.git
