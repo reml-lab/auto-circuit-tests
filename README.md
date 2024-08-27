@@ -63,6 +63,6 @@ executor.update_parameters(
 )
 ```
 
-run all cells under [Setup Executor and Run](run_experiments.ipynb#"Setup-Executor-and-Run")
+run all cells under [Setup Executor and Run](run_experiments.ipynb#Setup-Executor-and-Run)
 
-After all jobs have completed, run the remaining cells under [Analyze Results](run_experiments.ipynb#"Analyze-Results")
+After all jobs have completed, run the remaining cells under [Analyze Results](run_experiments.ipynb#Analyze-Results)
