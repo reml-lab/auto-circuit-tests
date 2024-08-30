@@ -19,7 +19,7 @@ def is_notebook() -> bool:
 
 import os
 if is_notebook():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0" #"1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "7" #"1"
     # os.environ['CUDA_LAUNCH_BLOCKING']="1"
     # os.environ['TORCH_USE_CUDA_DSA'] = "1"
 
@@ -117,6 +117,7 @@ class Config:
     grad_func: Optional[Union[GradFunc, str]] = GradFunc.LOGIT
     answer_func: Optional[Union[AnswerFunc, str]] = AnswerFunc.MAX_DIFF
     ig_samples: int = 10
+    layerwise: bool = True, 
     alpha: float = 0.05
     epsilon: Optional[float] = 0.0
     q_star: float = 0.9 
@@ -183,10 +184,10 @@ out_dir = repo_path_to_abs_path(OUTPUT_DIR / "hypo_test_results")
 out_dir.mkdir(exist_ok=True)
 score_dir = out_dir / f"{conf.task.replace(' ', '_')}_{conf.ablation_type.name}_{conf.grad_func.name}_{conf.answer_func.name}_{conf.ig_samples}" 
 score_dir.mkdir(exist_ok=True)
-exp_dir = score_dir / f"{conf.use_abs}_{conf.alpha}_{conf.epsilon}_{conf.q_star}"
-# if not is_notebook() and exp_dir.exists():
-#     print(f"Experiment directory {exp_dir} already exists. Exiting.")
-#     exit()
+exp_dir = score_dir / f"{conf.use_abs}_{conf.alpha}_{conf.epsilon}{'_layerwise_' if conf.layerwise else ''}{conf.q_star}"
+if not is_notebook() and exp_dir.exists():
+    print(f"Experiment directory {exp_dir} already exists. Exiting.")
+    exit()
 exp_dir.mkdir(exist_ok=True)
 
 
@@ -201,8 +202,14 @@ task.init_task()
 # In[8]:
 
 
+max_layer = max([edge.src.layer for edge in task.model.edges])
+
+
+# In[9]:
+
+
 # compute edge scores
-# TODO: pass full model
+# TODO: debug this
 prune_scores = mask_gradient_prune_scores(
     model=task.model, 
     dataloader=task.train_loader,
@@ -212,13 +219,14 @@ prune_scores = mask_gradient_prune_scores(
     mask_val=None, 
     ablation_type=conf.ablation_type,
     integrated_grad_samples=conf.ig_samples, 
+    layers=max_layer if conf.layerwise else None,
     clean_corrupt=conf.clean_corrupt,
 )
 if conf.save_cache:
     save_cache(prune_scores, exp_dir, "prune_scores")
 
 
-# In[9]:
+# In[10]:
 
 
 model_out_train: dict[BatchKey, torch.Tensor] = {
@@ -231,7 +239,7 @@ model_out_test: dict[BatchKey, torch.Tensor] = {
 }
 
 
-# In[10]:
+# In[11]:
 
 
 equiv_results, min_equiv = sweep_search_smallest_equiv(
@@ -250,7 +258,25 @@ equiv_results, min_equiv = sweep_search_smallest_equiv(
 save_json({k: result_to_json(v) for k, v in equiv_results.items()}, exp_dir, "equiv_results")
 
 
-# In[11]:
+# In[12]:
+
+
+19480 / 422383
+
+
+# In[12]:
+
+
+7400 / 38430
+
+
+# In[12]:
+
+
+18660 / 32491
+
+
+# In[13]:
 
 
 equiv_test_result = equiv_test(
@@ -270,7 +296,7 @@ equiv_test_result = equiv_test(
 save_json(result_to_json(equiv_test_result), exp_dir, "equiv_test_result")
 
 
-# In[12]:
+# In[14]:
 
 
 threshold = prune_scores_threshold(prune_scores, min_equiv, use_abs=conf.use_abs)
@@ -279,14 +305,14 @@ edges = edges_from_mask(task.model.srcs, task.model.dests, edge_mask, token=task
 save_json([edge.name for edge in edges], exp_dir, "edges")
 
 
-# In[13]:
+# In[15]:
 
 
 # contruct a graph from the pruned circuit, to further prune
 circ_graph = SeqGraph(edges, token=task.token_circuit, attn_only=task.model.cfg.attn_only)
 
 
-# In[14]:
+# In[16]:
 
 
 valid_edges = [
@@ -308,7 +334,7 @@ if not sum([torch.sum(((torch.abs(v) if conf.use_abs else v) >= threshold) & (v 
     print("Warning - valid edge scores do not match valid edges")
 
 
-# In[15]:
+# In[17]:
 
 
 # from elk_experiments.auto_circuit.circuit_hypotests import equiv_test
@@ -331,7 +357,7 @@ valid_edges_equiv_result = next(iter(equiv_test(
 save_json(result_to_json(valid_edges_equiv_result), exp_dir, "valid_edges_equiv_result")
 
 
-# In[16]:
+# In[18]:
 
 
 # set cicuit under test
@@ -345,7 +371,7 @@ edges_under_test_scores = {edge: prune_scores[edge.dest.module_name][get_edge_id
 edges_under_test = sorted(edges_under_test_scores.keys(), key=lambda x: abs(edges_under_test_scores[x]), reverse=False)
 
 
-# In[17]:
+# In[20]:
 
 
 fig = draw_seq_graph(
@@ -361,14 +387,14 @@ fig = draw_seq_graph(
 fig.write_image(repo_path_to_abs_path(exp_dir / "valid_edge_graph.png"))
 
 
-# In[18]:
+# In[21]:
 
 
 fig, ax = plot_num_ablated_C_gt_M(equiv_results, epsilon=conf.epsilon, min_equiv=min_equiv, side=conf.side)
 fig.savefig(repo_path_to_abs_path(exp_dir / "num_ablated_C_gt_M.png"))
 
 
-# In[19]:
+# In[22]:
 
 
 fig, ax = plot_circuit_and_model_scores(equiv_results, min_equiv)
