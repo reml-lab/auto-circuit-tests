@@ -185,9 +185,9 @@ out_dir.mkdir(exist_ok=True)
 score_dir = out_dir / f"{conf.task.replace(' ', '_')}_{conf.ablation_type.name}_{conf.grad_func.name}_{conf.answer_func.name}_{conf.ig_samples}" 
 score_dir.mkdir(exist_ok=True)
 exp_dir = score_dir / f"{conf.use_abs}_{conf.alpha}_{conf.epsilon}{'_layerwise_' if conf.layerwise else ''}{conf.q_star}"
-if not is_notebook() and exp_dir.exists():
-    print(f"Experiment directory {exp_dir} already exists. Exiting.")
-    exit()
+# if not is_notebook() and exp_dir.exists():
+#     print(f"Experiment directory {exp_dir} already exists. Exiting.")
+#     exit()
 exp_dir.mkdir(exist_ok=True)
 
 
