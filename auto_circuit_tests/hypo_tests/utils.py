@@ -35,21 +35,8 @@ def edges_from_mask(srcs: set[SrcNode], dests: set[DestNode], mask: Dict[str, to
     return edges
 
 
-def get_edge_idx(edge: Edge, tokens=False):
-    # TODO: make backwards compatible
-    if edge.dest.name == "Resid End":
-        idx = (edge.src.src_idx,)
-    elif edge.dest.name.startswith("MLP"):
-        idx = (edge.src.src_idx,)
-    else:
-        idx = (edge.dest.head_idx, edge.src.src_idx)
-    if tokens:
-        idx = (edge.seq_idx,) + idx
-    return idx
-
-
 def set_score(edge: Edge, scores, value, batch_idx: Optional[int] = None, tokens: bool = False):
-    idx = get_edge_idx(edge, tokens=tokens)
+    idx = edge.patch_idx
     # remove nones
     idx = tuple(filter(lambda x: x is not None, idx))
     # if idx[0] is None:

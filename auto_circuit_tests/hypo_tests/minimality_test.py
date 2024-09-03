@@ -23,7 +23,7 @@ from auto_circuit.utils.custom_tqdm import tqdm
 
 from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, get_score_func
 from auto_circuit_tests.edge_graph import SeqGraph, sample_paths 
-from auto_circuit_tests.hypo_tests.utils import edges_from_mask, get_edge_idx, set_score
+from auto_circuit_tests.hypo_tests.utils import edges_from_mask,  set_score
 
 
 
@@ -189,7 +189,7 @@ def minimality_test_edge(
     
     # ablate edge and run 
     prune_scores_ablated = {k: v.clone() for k, v in prune_scores.items()}
-    prune_scores_ablated[edge.dest.module_name][get_edge_idx(edge, tokens=tokens)] = 0.0
+    prune_scores_ablated[edge.dest.module_name][edge.patch_idx] = 0.0
     circuit_out_ablated = next(iter(run_circuits(
         model=model, 
         dataloader=dataloader,
