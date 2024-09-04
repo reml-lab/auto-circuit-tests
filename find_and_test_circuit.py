@@ -19,7 +19,7 @@ def is_notebook() -> bool:
 
 import os
 if is_notebook():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1" #"1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0" #"1"
     # os.environ['CUDA_LAUNCH_BLOCKING']="1"
     # os.environ['TORCH_USE_CUDA_DSA'] = "1"
 
@@ -42,7 +42,7 @@ torch.cuda.is_available()
 # 
 # 
 
-# In[21]:
+# In[3]:
 
 
 import os
@@ -101,7 +101,7 @@ from auto_circuit_tests.edge_graph import (
 )
 
 from auto_circuit_tests.tasks import TASK_DICT
-from auto_circuit_tests.utils import OUTPUT_DIR, repo_path_to_abs_path, load_cache, save_cache, save_json, load_json
+from auto_circuit_tests.utils import OUTPUT_DIR, RESULTS_DIR, repo_path_to_abs_path, load_cache, save_cache, save_json, load_json
 
 
 # In[4]:
@@ -180,16 +180,15 @@ if not is_notebook():
 
 
 # handle directories
-out_dir = repo_path_to_abs_path(OUTPUT_DIR / "hypo_test_results")
+out_dir = RESULTS_DIR
 out_dir.mkdir(exist_ok=True)
-#TODO: should remove IG_Samples
-score_dir = out_dir / f"{conf.task.replace(' ', '_')}_{conf.ablation_type.name}_{conf.grad_func.name}_{conf.answer_func.name}_{conf.ig_samples}" 
-score_dir.mkdir(exist_ok=True)
-exp_dir = score_dir / f"{conf.use_abs}_{conf.alpha}_{conf.epsilon}{'_layerwise_' if conf.layerwise else '_'}{'_act_patch_' if conf.act_patch else '_'}{conf.q_star}"
-# if not is_notebook() and exp_dir.exists():
-#     print(f"Experiment directory {exp_dir} already exists. Exiting.")
-#     exit()
-exp_dir.mkdir(exist_ok=True)
+# should resctructure output directory to be task/ablation_type/output_func_answer_func/prune_score/experiments
+task_dir = out_dir / conf.task.replace(' ', '_')
+ablation_dir = task_dir / conf.ablation_type.name
+out_answer_dir = ablation_dir / f"{conf.grad_func.name}_{conf.answer_func.name}"
+ps_dir = out_answer_dir / (f"{conf.ig_samples}_{conf.layerwise}" if not conf.act_patch else "act_patch")
+exp_dir = ps_dir / f"{conf.use_abs}_{conf.alpha}_{conf.epsilon}_{conf.q_star}"
+exp_dir.mkdir(exist_ok=True, parents=True)
 
 
 # In[7]:
@@ -202,30 +201,30 @@ task.init_task()
 
 # # Prune Scores
 
+# In[ ]:
+
+
+# if act_patch, no need to compute attribution scores
+# if act_patch and act_patch doesn't exist, exit
+# if not act_patch but act_patch doesn't exist, skip that 
+
+
 # ## Activation Patching Prune Scores
 
-# In[8]:
+# In[ ]:
 
 
-act_ps_name = "act_patch_prune_scores"
-act_ps_path = (score_dir / act_ps_name).with_suffix(".pkl")
-if (act_ps_path).exists():
+# load from cache if exists 
+act_ps_path = out_answer_dir / "act_patch_prune_scores.pkl"
+if act_ps_path.exists():
     act_prune_scores = torch.load(act_ps_path)
-elif conf.act_patch:
-    act_prune_scores = act_patch_prune_scores(
-        model=task.model, 
-        dataloader=task.train_loader,
-        grad_function=conf.grad_func_mask.value, 
-        answer_function=conf.answer_func_mask.value,
-        ablation_type=conf.ablation_type,
-        clean_corrupt=conf.clean_corrupt,
-    )
-    if conf.save_cache:
-        torch.save(act_prune_scores, act_ps_path)
-# # delete path 
-# if act_ps_path.exists():
-#     os.remove(act_ps_path)
-    
+else:
+    act_prune_scores = None
+
+# if act_patch and act_patch doesn't exist, exit
+if conf.act_patch and act_prune_scores is None:
+    print("act_patch_prune_scores.pkl not found, exiting")
+    exit()
 
 
 # ##  Attribution Patching Prune Scores
@@ -233,55 +232,60 @@ elif conf.act_patch:
 # In[9]:
 
 
-# TODO: 
-attr_ps_name = "attrib_patch_prune_scores"
-attr_ps_path = (exp_dir / attr_ps_name).with_suffix(".pkl")
-if (attr_ps_path).exists():
-    attr_prune_scores = torch.load(attr_ps_path)
-else: 
-    max_layer = max([edge.src.layer for edge in task.model.edges])
+if not conf.act_patch:
+    attr_ps_name = "attrib_patch_prune_scores"
+    attr_ps_path = (exp_dir / attr_ps_name).with_suffix(".pkl")
+    if (attr_ps_path).exists():
+        attr_prune_scores = torch.load(attr_ps_path)
+    else: 
+        max_layer = max([edge.src.layer for edge in task.model.edges])
 
-    attr_prune_scores = mask_gradient_prune_scores(
-        model=task.model, 
-        dataloader=task.train_loader,
-        official_edges=None,
-        grad_function=conf.grad_func_mask.value, 
-        answer_function=conf.answer_func_mask.value, #answer_function,
-        mask_val=None, 
-        ablation_type=conf.ablation_type,
-        integrated_grad_samples=10, 
-        layers=max_layer if conf.layerwise else None,
-        clean_corrupt=conf.clean_corrupt,
-    )
-    if conf.save_cache:
-        torch.save(attr_prune_scores, attr_ps_path)
+        attr_prune_scores = mask_gradient_prune_scores(
+            model=task.model, 
+            dataloader=task.train_loader,
+            official_edges=None,
+            grad_function=conf.grad_func_mask.value, 
+            answer_function=conf.answer_func_mask.value, #answer_function,
+            mask_val=None, 
+            ablation_type=conf.ablation_type,
+            integrated_grad_samples=10, 
+            layers=max_layer if conf.layerwise else None,
+            clean_corrupt=conf.clean_corrupt,
+        )
+        if conf.save_cache:
+            torch.save(attr_prune_scores, attr_ps_path)
 
 
 # ##  Compare Activation and Attribution Patching
+
+# ### MSE
 
 # In[23]:
 
 
 # mse and median se
-mse_result_name = "act_attr_mse"
-mse_result_path = (exp_dir / mse_result_name).with_suffix(".json")
-if mse_result_path.exists():
-    mse_result = load_json(exp_dir, mse_result_name + '.json')
-else:
-    prune_score_diffs = [
-        (act_prune_scores[mod_name] - attr_prune_scores[mod_name]).flatten()
-        for mod_name, _patch_mask in task.model.patch_masks.items()
-    ]
-    sq_error = torch.concat(prune_score_diffs).pow(2)
-    median_se = sq_error.median()
-    mean_se = sq_error.mean()
-    mse_result = {
-        "median_se": median_se.item(),
-        "mean_se": mean_se.item(),
-    }
-    save_json(mse_result, exp_dir, mse_result_name)
-print(mse_result)
+if not conf.act_patch and act_prune_scores is not None:
+    mse_result_name = "act_attr_mse"
+    mse_result_path = (exp_dir / mse_result_name).with_suffix(".json")
+    if mse_result_path.exists():
+        mse_result = load_json(exp_dir, mse_result_name + '.json')
+    else:
+        prune_score_diffs = [
+            (act_prune_scores[mod_name] - attr_prune_scores[mod_name]).flatten()
+            for mod_name, _patch_mask in task.model.patch_masks.items()
+        ]
+        sq_error = torch.concat(prune_score_diffs).pow(2)
+        median_se = sq_error.median()
+        mean_se = sq_error.mean()
+        mse_result = {
+            "median_se": median_se.item(),
+            "mean_se": mean_se.item(),
+        }
+        save_json(mse_result, exp_dir, mse_result_name)
+    print(mse_result)
 
+
+# ### Kendall Tau
 
 # In[11]:
 
@@ -307,29 +311,38 @@ def kendallTau(A, B):
 # In[24]:
 
 
-kt_results_name = "act_attr_kendall_tau"
-kt_results_path = (exp_dir / kt_results_name).with_suffix(".json")
-if kt_results_path.exists():
-    mse_results = load_json(exp_dir, kt_results_name + '.json')
-    dist = mse_results["distance"]
-    norm_dist = mse_results["normalized_distance"]
-else:
-    act_prune_scores_flat = flat_prune_scores(act_prune_scores)
-    attr_prune_scores_flat = flat_prune_scores(attr_prune_scores)
+if not conf.act_patch and act_prune_scores is not None:
+    kt_results_name = "act_attr_kendall_tau"
+    kt_results_path = (exp_dir / kt_results_name).with_suffix(".json")
+    if kt_results_path.exists():
+        mse_results = load_json(exp_dir, kt_results_name + '.json')
+        dist = mse_results["distance"]
+        norm_dist = mse_results["normalized_distance"]
+    else:
+        act_prune_scores_flat = flat_prune_scores(act_prune_scores)
+        attr_prune_scores_flat = flat_prune_scores(attr_prune_scores)
 
-    n_elements = len(act_prune_scores_flat)
+        n_elements = len(act_prune_scores_flat)
 
-    dist = kendallTau(act_prune_scores_flat, attr_prune_scores_flat)
+        dist = kendallTau(act_prune_scores_flat, attr_prune_scores_flat)
 
-    norm_dist = dist * 2 / (n_elements * (n_elements - 1))
-    norm_dist
+        norm_dist = dist * 2 / (n_elements * (n_elements - 1))
+        norm_dist
 
-    kendall_tau_result = {
-        "distance": dist,
-        "normalized_distance": norm_dist,
-    }
-    save_json(kendall_tau_result, exp_dir, kt_results_name)
-print(kendall_tau_result)
+        kendall_tau_result = {
+            "distance": dist,
+            "normalized_distance": norm_dist,
+        }
+        save_json(kendall_tau_result, exp_dir, kt_results_name)
+    print(kendall_tau_result)
+
+
+# ### Discounted Cumulative Gain
+
+# In[ ]:
+
+
+# TODO:
 
 
 # #  Minimal Faithful Circuit According to Prune Score Ordering

@@ -1,0 +1,1 @@
+jupyter nbconvert --to python compute_act_patch_prune_scores.ipynb --output-dir .

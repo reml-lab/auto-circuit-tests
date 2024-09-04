@@ -1,1 +1,0 @@
-jupyter nbconvert --to python  find_and_test_circuit.ipynb --output-dir .

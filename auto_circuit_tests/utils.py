@@ -9,9 +9,6 @@ import torch
 
 from transformer_lens import HookedTransformer
 
-OUTPUT_DIR = Path("output")
-
-
 
 def repo_path_to_abs_path(path: str) -> Path:
     """
@@ -26,6 +23,9 @@ def repo_path_to_abs_path(path: str) -> Path:
     """
     repo_abs_path = Path(__file__).parent.parent.absolute()
     return repo_abs_path / path
+
+OUTPUT_DIR = Path("output")
+RESULTS_DIR = repo_path_to_abs_path(OUTPUT_DIR / "hypo_test_results")
 
 def save_cache(data_dict: Dict[Any, Any], folder_name: str, base_filename: str):
     """
