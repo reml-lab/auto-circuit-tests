@@ -19,7 +19,7 @@ def is_notebook() -> bool:
 
 import os
 if is_notebook():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0" #"1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "4" #"1"
     # os.environ['CUDA_LAUNCH_BLOCKING']="1"
     # os.environ['TORCH_USE_CUDA_DSA'] = "1"
 
@@ -104,18 +104,18 @@ from auto_circuit_tests.tasks import TASK_DICT
 from auto_circuit_tests.utils import OUTPUT_DIR, RESULTS_DIR, repo_path_to_abs_path, load_cache, save_cache, save_json, load_json
 
 
-# In[4]:
+# In[10]:
 
 
 # config class
 @dataclass 
 class Config: 
-    task: str = "Docstring Component Circuit" # check how many edges in component circuit (probably do all but ioi toen)
-    use_abs: bool = True
-    ablation_type: Union[AblationType, str] = AblationType.TOKENWISE_MEAN_CORRUPT
+    task: str = "Docstring Token Circuit" # check how many edges in component circuit (probably do all but ioi toen)
+    use_abs: bool = False
+    ablation_type: Union[AblationType, str] = AblationType.TOKENWISE_MEAN_CLEAN
     grad_func: Optional[Union[GradFunc, str]] = GradFunc.LOGIT
     answer_func: Optional[Union[AnswerFunc, str]] = AnswerFunc.MAX_DIFF
-    ig_samples: int = 10
+    ig_samples: Optional[int] = None
     layerwise: bool = False
     act_patch: bool = True
     alpha: float = 0.05
@@ -164,7 +164,7 @@ class Config:
             self.side = Side.NONE if self.use_abs else Side.LEFT #TODO: fix this? for abs and negative epsilon?
 
 
-# In[5]:
+# In[24]:
 
 
 # initialize config 
@@ -176,7 +176,13 @@ if not is_notebook():
     conf = Config(**conf_dict)
 
 
-# In[6]:
+# In[22]:
+
+
+conf.ig_samples
+
+
+# In[13]:
 
 
 # handle directories
@@ -191,7 +197,7 @@ exp_dir = ps_dir / f"{conf.use_abs}_{conf.alpha}_{conf.epsilon}_{conf.q_star}"
 exp_dir.mkdir(exist_ok=True, parents=True)
 
 
-# In[7]:
+# In[14]:
 
 
 # initialize task
@@ -201,23 +207,16 @@ task.init_task()
 
 # # Prune Scores
 
-# In[ ]:
-
-
-# if act_patch, no need to compute attribution scores
-# if act_patch and act_patch doesn't exist, exit
-# if not act_patch but act_patch doesn't exist, skip that 
-
-
 # ## Activation Patching Prune Scores
 
-# In[ ]:
+# In[8]:
 
 
 # load from cache if exists 
 act_ps_path = out_answer_dir / "act_patch_prune_scores.pkl"
 if act_ps_path.exists():
     act_prune_scores = torch.load(act_ps_path)
+    act_prune_scores = {mod_name: -score for mod_name, score in act_prune_scores.items()} # negative b/c high score should imply large drop in performance
 else:
     act_prune_scores = None
 
@@ -229,12 +228,12 @@ if conf.act_patch and act_prune_scores is None:
 
 # ##  Attribution Patching Prune Scores
 
-# In[9]:
+# In[15]:
 
 
 if not conf.act_patch:
     attr_ps_name = "attrib_patch_prune_scores"
-    attr_ps_path = (exp_dir / attr_ps_name).with_suffix(".pkl")
+    attr_ps_path = (ps_dir / attr_ps_name).with_suffix(".pkl")
     if (attr_ps_path).exists():
         attr_prune_scores = torch.load(attr_ps_path)
     else: 
@@ -246,9 +245,9 @@ if not conf.act_patch:
             official_edges=None,
             grad_function=conf.grad_func_mask.value, 
             answer_function=conf.answer_func_mask.value, #answer_function,
-            mask_val=None, 
+            mask_val=0.0 if conf.ig_samples is None else None, 
             ablation_type=conf.ablation_type,
-            integrated_grad_samples=10, 
+            integrated_grad_samples=conf.ig_samples, 
             layers=max_layer if conf.layerwise else None,
             clean_corrupt=conf.clean_corrupt,
         )
@@ -258,17 +257,25 @@ if not conf.act_patch:
 
 # ##  Compare Activation and Attribution Patching
 
+# In[16]:
+
+
+if not conf.act_patch:
+    act_prune_scores_flat = flat_prune_scores(act_prune_scores)
+    attr_prune_scores_flat = flat_prune_scores(attr_prune_scores)
+
+
 # ### MSE
 
-# In[23]:
+# In[17]:
 
 
 # mse and median se
 if not conf.act_patch and act_prune_scores is not None:
     mse_result_name = "act_attr_mse"
-    mse_result_path = (exp_dir / mse_result_name).with_suffix(".json")
+    mse_result_path = (ps_dir / mse_result_name).with_suffix(".json")
     if mse_result_path.exists():
-        mse_result = load_json(exp_dir, mse_result_name + '.json')
+        mse_result = load_json(ps_dir, mse_result_name + '.json')
     else:
         prune_score_diffs = [
             (act_prune_scores[mod_name] - attr_prune_scores[mod_name]).flatten()
@@ -281,80 +288,110 @@ if not conf.act_patch and act_prune_scores is not None:
             "median_se": median_se.item(),
             "mean_se": mean_se.item(),
         }
-        save_json(mse_result, exp_dir, mse_result_name)
+        save_json(mse_result, ps_dir, mse_result_name)
     print(mse_result)
 
 
 # ### Kendall Tau
 
-# In[11]:
+# In[83]:
 
 
-# order difference 
-import itertools
-def kendallTau(A, B):
-    pairs = itertools.combinations(range(0, len(A)), 2)
-    pairs = list(pairs)
-    distance = 0
+# # order difference 
+# import itertools
+# def kendallTau(A, B):
+#     pairs = itertools.combinations(range(0, len(A)), 2)
+#     pairs = list(pairs)
+#     distance = 0
 
-    for x, y in tqdm(pairs):
-        a = A[x] - A[y]
-        b = B[x] - B[y]
+#     for x, y in tqdm(pairs):
+#         a = A[x] - A[y]
+#         b = B[x] - B[y]
 
-        # if discordant (different signs)
-        if (a * b < 0):
-            distance += 1
+#         # if discordant (different signs)
+#         if (a * b < 0):
+#             distance += 1
 
-    return distance
+#     return distance
+
+# if act_prune_scores is not None:
+#     kt_results_name = "act_attr_kendall_tau"
+#     kt_results_path = (ps_dir / kt_results_name).with_suffix(".json")
+#     if kt_results_path.exists():
+#         mse_results = load_json(ps_dir, kt_results_name + '.json')
+#         dist = mse_results["distance"]
+#         norm_dist = mse_results["normalized_distance"]
+#     else:
+#         n_elements = len(act_prune_scores_flat)
+
+#         dist = kendallTau(act_prune_scores_flat, attr_prune_scores_flat)
+
+#         norm_dist = dist * 2 / (n_elements * (n_elements - 1))
+#         norm_dist
+
+#         kendall_tau_result = {
+#             "distance": dist,
+#             "normalized_distance": norm_dist,
+#         }
+#         save_json(kendall_tau_result, ps_dir, kt_results_name)
+#     print(kendall_tau_result)
 
 
-# In[24]:
+# ### Spearman Rank Correlation
+
+# In[18]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
-    kt_results_name = "act_attr_kendall_tau"
-    kt_results_path = (exp_dir / kt_results_name).with_suffix(".json")
-    if kt_results_path.exists():
-        mse_results = load_json(exp_dir, kt_results_name + '.json')
-        dist = mse_results["distance"]
-        norm_dist = mse_results["normalized_distance"]
-    else:
-        act_prune_scores_flat = flat_prune_scores(act_prune_scores)
-        attr_prune_scores_flat = flat_prune_scores(attr_prune_scores)
+    from scipy import stats 
+    abs_corr, abs_p_value = stats.spearmanr(act_prune_scores_flat.abs().cpu(), attr_prune_scores_flat.abs().cpu())
+    pos_attr_prune_scores_idx = attr_prune_scores_flat > 0
+    attr_prune_scores_pos = attr_prune_scores_flat[pos_attr_prune_scores_idx]
+    act_prune_scores_pos = act_prune_scores_flat[pos_attr_prune_scores_idx]
+    corr, p_value = stats.spearmanr(act_prune_scores_pos.cpu(), attr_prune_scores_pos.cpu())
+    print(f"abs corr: {abs_corr}, abs p-value: {abs_p_value}")
+    print(f"corr: {corr}, p-value: {p_value}")
 
-        n_elements = len(act_prune_scores_flat)
-
-        dist = kendallTau(act_prune_scores_flat, attr_prune_scores_flat)
-
-        norm_dist = dist * 2 / (n_elements * (n_elements - 1))
-        norm_dist
-
-        kendall_tau_result = {
-            "distance": dist,
-            "normalized_distance": norm_dist,
-        }
-        save_json(kendall_tau_result, exp_dir, kt_results_name)
-    print(kendall_tau_result)
+    spearman_results = {
+        "abs_corr": abs_corr,
+        "abs_p_value": abs_p_value,
+        "corr": corr,
+        "p_value": p_value,
+    }
+    save_json(spearman_results, ps_dir, "spearman_results")
 
 
-# ### Discounted Cumulative Gain
+# ### Plot Scores
+
+# In[19]:
+
+
+if not conf.act_patch and act_prune_scores is not None:
+    # plot scores on x, y
+    plt.scatter(act_prune_scores_flat.cpu(), attr_prune_scores_flat.cpu())
+    plt.xlabel("Act Patch Scores")
+    plt.ylabel("Attrib Patch Scores")
+    plt.savefig(ps_dir / "act_attr_scores.png")
+
 
 # In[ ]:
 
 
-# TODO:
+# check if exp_dir is empty, and exit if so (temporary for running act patch comparisions without rerunning tests)
+if len(list(exp_dir.iterdir())) != 0:
+    exit()
 
 
 # #  Minimal Faithful Circuit According to Prune Score Ordering
 
-# In[27]:
+# In[43]:
 
 
 # set prune scores
 prune_scores = act_prune_scores if conf.act_patch else attr_prune_scores
 
 
-# In[28]:
+# In[44]:
 
 
 model_out_train: dict[BatchKey, torch.Tensor] = {
@@ -367,7 +404,7 @@ model_out_test: dict[BatchKey, torch.Tensor] = {
 }
 
 
-# In[29]:
+# In[47]:
 
 
 equiv_results, min_equiv = sweep_search_smallest_equiv(
@@ -596,7 +633,7 @@ save_json({e.name: result_to_json(r) for e, r in min_test_sampled_results.items(
 min_postfix = f"{conf.q_star}_{conf.alpha}"
 min_postfix_full = f"{conf.max_edges_to_test_in_order}_{min_postfix}"
 # check if already tested 
-true_edges_tested = (score_dir / f"min_test_true_edge_results_{min_postfix_full}.json").exists() and not is_notebook()
+true_edges_tested = (out_answer_dir / f"min_test_true_edge_results_{min_postfix_full}.json").exists() and not is_notebook()
 if not true_edges_tested:
     true_edge_prune_scores = task.model.circuit_prune_scores(task.true_edges)
     filtered_paths_true_edge = sample_paths(graph, n_paths, set(task.model.edges) - task.true_edges, sample_type=conf.sample_type)
@@ -618,8 +655,8 @@ if not true_edges_tested:
         max_edges_in_order_without_fail=conf.max_edges_to_test_without_fail,
         max_edges_to_sample=conf.max_edges_to_sample,
     )
-    save_json({e.name: result_to_json(r) for e, r in min_test_true_edge_results.items()}, score_dir, f"min_test_true_edge_results_{min_postfix_full}")
-    save_json({e.name: result_to_json(r) for e, r in min_test_true_edge_sampled_results.items()}, score_dir, f"min_test_true_edge_sampled_results_{conf.max_edges_to_sample}_{min_postfix}")
+    save_json({e.name: result_to_json(r) for e, r in min_test_true_edge_results.items()}, out_answer_dir, f"min_test_true_edge_results_{min_postfix_full}")
+    save_json({e.name: result_to_json(r) for e, r in min_test_true_edge_sampled_results.items()}, out_answer_dir, f"min_test_true_edge_sampled_results_{conf.max_edges_to_sample}_{min_postfix}")
 
 
 # In[53]:
@@ -656,7 +693,7 @@ if not true_edges_tested:
     batch_size = task.batch_size[1] if isinstance(task.batch_size, tuple) else task.batch_size
     batch_count = task.batch_count[1] if isinstance(task.batch_count, tuple) else task.batch_count
     fig, ax = plot_edge_k(min_test_true_edge_results, true_edge_scores, batch_size * batch_count, q_star=conf.q_star)
-    fig.savefig(repo_path_to_abs_path(score_dir / f"min_test_true_edge_k_{min_postfix_full}.png"))
+    fig.savefig(repo_path_to_abs_path(out_answer_dir / f"min_test_true_edge_k_{min_postfix_full}.png"))
 
 
 # In[57]:
@@ -734,5 +771,5 @@ if not true_edges_tested:
         alpha=conf.alpha,
         B=1000
     )
-    save_json(result_to_json(indep_true_edge_result), score_dir, f"indep_true_edge_result")
+    save_json(result_to_json(indep_true_edge_result), out_answer_dir, f"indep_true_edge_result")
 
