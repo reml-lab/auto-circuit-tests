@@ -7,7 +7,8 @@ from typing import Dict, Any
 
 import torch
 
-from transformer_lens import HookedTransformer
+from auto_circuit.types import AblationType
+from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc
 
 
 def repo_path_to_abs_path(path: str) -> Path:
@@ -89,3 +90,27 @@ def load_json(folder_name: str, filename: str):
     folder = repo_path_to_abs_path(folder_name)
     with open(folder / filename, "r") as f:
         return json.load(f)
+
+
+def get_exp_dir(
+    task_key: str,
+    ablation_type: AblationType,
+    grad_func: GradFunc,
+    answer_func: AnswerFunc,
+    ig_samples: int, 
+    layerwise: bool,
+    act_patch: bool,
+    use_abs: bool,
+    alpha: float,
+    epsilon: float,
+    q_star: float
+):
+    # handle directories
+    out_dir = RESULTS_DIR
+    # should resctructure output directory to be task/ablation_type/output_func_answer_func/prune_score/experiments
+    task_dir = out_dir / task_key.replace(' ', '_')
+    ablation_dir = task_dir / ablation_type.name
+    out_answer_dir = ablation_dir / f"{grad_func.name}_{answer_func.name}"
+    ps_dir = out_answer_dir / (f"{ig_samples}_{layerwise}" if not act_patch else "act_patch")
+    exp_dir = ps_dir / f"{use_abs}_{alpha}_{epsilon}_{q_star}"
+    return task_dir, ablation_dir, out_answer_dir, ps_dir, exp_dir

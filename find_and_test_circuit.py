@@ -104,7 +104,7 @@ from auto_circuit_tests.tasks import TASK_DICT
 from auto_circuit_tests.utils import OUTPUT_DIR, RESULTS_DIR, repo_path_to_abs_path, load_cache, save_cache, save_json, load_json
 
 
-# In[10]:
+# In[117]:
 
 
 # config class
@@ -117,7 +117,7 @@ class Config:
     answer_func: Optional[Union[AnswerFunc, str]] = AnswerFunc.MAX_DIFF
     ig_samples: Optional[int] = None
     layerwise: bool = False
-    act_patch: bool = True
+    act_patch: bool = False
     alpha: float = 0.05
     epsilon: Optional[float] = 0.0
     q_star: float = 0.9 
@@ -164,7 +164,7 @@ class Config:
             self.side = Side.NONE if self.use_abs else Side.LEFT #TODO: fix this? for abs and negative epsilon?
 
 
-# In[24]:
+# In[118]:
 
 
 # initialize config 
@@ -176,28 +176,27 @@ if not is_notebook():
     conf = Config(**conf_dict)
 
 
-# In[22]:
-
-
-conf.ig_samples
-
-
-# In[13]:
+# In[119]:
 
 
 # handle directories
-out_dir = RESULTS_DIR
-out_dir.mkdir(exist_ok=True)
-# should resctructure output directory to be task/ablation_type/output_func_answer_func/prune_score/experiments
-task_dir = out_dir / conf.task.replace(' ', '_')
-ablation_dir = task_dir / conf.ablation_type.name
-out_answer_dir = ablation_dir / f"{conf.grad_func.name}_{conf.answer_func.name}"
-ps_dir = out_answer_dir / (f"{conf.ig_samples}_{conf.layerwise}" if not conf.act_patch else "act_patch")
-exp_dir = ps_dir / f"{conf.use_abs}_{conf.alpha}_{conf.epsilon}_{conf.q_star}"
-exp_dir.mkdir(exist_ok=True, parents=True)
+from auto_circuit_tests.utils import get_exp_dir
+task_dir, ablation_dir, out_answer_dir, ps_dir, exp_dir = get_exp_dir(
+    task_key=conf.task, 
+    ablation_key=conf.ablation_type,
+    grad_func=conf.grad_func,
+    answer_func=conf.answer_func,
+    ig_samples=conf.ig_samples,
+    layerwise=conf.layerwise,
+    act_patch=conf.act_patch,
+    use_abs=conf.use_abs,
+    alpha=conf.alpha,
+    epsilon=conf.epsilon,
+    q_star=conf.q_star,
+)
 
 
-# In[14]:
+# In[120]:
 
 
 # initialize task
@@ -209,7 +208,7 @@ task.init_task()
 
 # ## Activation Patching Prune Scores
 
-# In[8]:
+# In[121]:
 
 
 # load from cache if exists 
@@ -228,7 +227,7 @@ if conf.act_patch and act_prune_scores is None:
 
 # ##  Attribution Patching Prune Scores
 
-# In[15]:
+# In[122]:
 
 
 if not conf.act_patch:
@@ -257,17 +256,40 @@ if not conf.act_patch:
 
 # ##  Compare Activation and Attribution Patching
 
-# In[16]:
+# In[123]:
+
+
+from auto_circuit.types import PruneScores
+import torch as t
+def flat_prune_scores_ordered(prune_scores: PruneScores, order: list[str], per_inst: bool=False) -> t.Tensor:
+    """
+    Flatten the prune scores into a single, 1-dimensional tensor.
+
+    Args:
+        prune_scores: The prune scores to flatten.
+        per_inst: Whether the prune scores are per instance.
+
+    Returns:
+        The flattened prune scores.
+    """
+    start_dim = 1 if per_inst else 0
+    cat_dim = 1 if per_inst else 0
+    return t.cat([prune_scores[mod_name].flatten(start_dim) for mod_name in order], cat_dim)
+
+
+# In[124]:
 
 
 if not conf.act_patch:
-    act_prune_scores_flat = flat_prune_scores(act_prune_scores)
-    attr_prune_scores_flat = flat_prune_scores(attr_prune_scores)
+    # order = sorted(list(act_prune_scores.keys()), key=lambda x: int(x.split('.')[1]))
+    order = list(act_prune_scores.keys())
+    act_prune_scores_flat = flat_prune_scores_ordered(act_prune_scores, order=order)
+    attr_prune_scores_flat = flat_prune_scores_ordered(attr_prune_scores, order=order)
 
 
 # ### MSE
 
-# In[17]:
+# In[125]:
 
 
 # mse and median se
@@ -294,7 +316,7 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # ### Kendall Tau
 
-# In[83]:
+# In[126]:
 
 
 # # order difference 
@@ -339,7 +361,7 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # ### Spearman Rank Correlation
 
-# In[18]:
+# In[127]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
@@ -361,14 +383,63 @@ if not conf.act_patch and act_prune_scores is not None:
     save_json(spearman_results, ps_dir, "spearman_results")
 
 
+# ### Plot Rank 
+
+# In[128]:
+
+
+def get_el_rank(x: t.Tensor) -> t.Tensor:
+    indices = t.argsort(x)
+    rank = torch.zeros_like(x)
+    for i, index in enumerate(indices):
+        rank[index] = i
+    return rank
+
+
+# In[129]:
+
+
+# get rank for scores
+if not conf.act_patch:
+    act_prune_scores_rank = get_el_rank(act_prune_scores_flat.cpu())
+    attr_prune_scores_rank = get_el_rank(attr_prune_scores_flat.cpu())
+
+
+# In[131]:
+
+
+# TODO: plot x=0
+plt.scatter(act_prune_scores_rank, attr_prune_scores_rank, s=0.1)
+plt.xlabel("Act Patch Rank")
+plt.ylabel("Attrib Patch Rank")
+plt.title("Rank Correlation")
+plt.savefig(ps_dir / "rank_corr.png")
+
+
+# In[105]:
+
+
+# TODO: I think there must be a bug? 
+# get rank for scores
+if not conf.act_patch:
+    act_prune_scores_rank = get_el_rank(act_prune_scores_flat.abs().cpu())
+    attr_prune_scores_rank = get_el_rank(attr_prune_scores_flat.abs().cpu())
+
+plt.scatter(act_prune_scores_rank, attr_prune_scores_rank, s=0.1)
+plt.xlabel("Act Patch Rank")
+plt.ylabel("Attrib Patch Rank")
+plt.title("Rank Correlation Abs")
+plt.savefig(ps_dir / "rank_corr_abs.png")
+
+
 # ### Plot Scores
 
-# In[19]:
+# In[107]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
     # plot scores on x, y
-    plt.scatter(act_prune_scores_flat.cpu(), attr_prune_scores_flat.cpu())
+    plt.scatter(act_prune_scores_flat.cpu(), attr_prune_scores_flat.cpu(), alpha=0.1)
     plt.xlabel("Act Patch Scores")
     plt.ylabel("Attrib Patch Scores")
     plt.savefig(ps_dir / "act_attr_scores.png")
@@ -384,14 +455,14 @@ if len(list(exp_dir.iterdir())) != 0:
 
 # #  Minimal Faithful Circuit According to Prune Score Ordering
 
-# In[43]:
+# In[139]:
 
 
 # set prune scores
 prune_scores = act_prune_scores if conf.act_patch else attr_prune_scores
 
 
-# In[44]:
+# In[136]:
 
 
 model_out_train: dict[BatchKey, torch.Tensor] = {
@@ -404,7 +475,7 @@ model_out_test: dict[BatchKey, torch.Tensor] = {
 }
 
 
-# In[47]:
+# In[140]:
 
 
 equiv_results, min_equiv = sweep_search_smallest_equiv(
@@ -420,7 +491,7 @@ equiv_results, min_equiv = sweep_search_smallest_equiv(
     epsilon=conf.epsilon,
     model_out=model_out_train,
 )
-# save_json({k: result_to_json(v) for k, v in equiv_results.items()}, exp_dir, "equiv_results")
+save_json({k: result_to_json(v) for k, v in equiv_results.items()}, exp_dir, "equiv_results")
 
 
 # In[30]:
@@ -673,7 +744,7 @@ fig.savefig(repo_path_to_abs_path(exp_dir / "min_test_p_values.png"))
 if not true_edges_tested:
     true_edge_scores = {edge: torch.tensor(1.0) for edge in task.true_edges} # don't actually know
     fig, ax = plot_p_values(min_test_true_edge_results, true_edge_scores, alpha=conf.alpha / task.true_edge_count)
-    fig.savefig(repo_path_to_abs_path(score_dir / f"min_test_true_edge_p_values_{min_postfix_full}.png"))
+    fig.savefig(repo_path_to_abs_path(out_answer_dir / f"min_test_true_edge_p_values_{min_postfix_full}.png"))
 
 
 # In[61]:
@@ -709,7 +780,7 @@ fig.savefig(repo_path_to_abs_path(exp_dir / f"min_test_score_quantiles.png"))
 
 if not true_edges_tested:
     fig, ax = plot_score_quantiles(min_test_true_edge_results, true_edge_scores, quantile_range=[0.00, 1.00])
-    fig.savefig(repo_path_to_abs_path(score_dir / f"min_test_true_edge_score_quantiles_{min_postfix_full}.png"))
+    fig.savefig(repo_path_to_abs_path(out_answer_dir / f"min_test_true_edge_score_quantiles_{min_postfix_full}.png"))
 
 
 # # Independence Test
