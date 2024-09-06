@@ -431,6 +431,18 @@ if not conf.act_patch:
     plt.savefig(ps_dir / "rank_corr_abs.png")
 
 
+# ### Compute Fraction of "Mis-Signed" Components
+
+# In[99]:
+
+
+if not conf.act_patch and act_prune_scores is not None:
+    num_missigned = (act_prune_scores_flat.sign() != attr_prune_scores_flat.sign()).sum()
+    frac_missigned = num_missigned / len(act_prune_scores_flat)
+    print(f"Fraction of missigned: {frac_missigned}")
+    save_json({"frac_missigned": frac_missigned.item()}, ps_dir, "missigned")
+
+
 # ### Plot Scores
 
 # In[93]:
@@ -464,6 +476,7 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # check if exp_dir is empty, and exit if so (temporary for running act patch comparisions without rerunning tests)
 if len(list(exp_dir.iterdir())) != 0:
+    print("exp_dir not empty, exiting")
     exit()
 
 
