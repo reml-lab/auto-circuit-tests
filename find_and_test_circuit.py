@@ -19,7 +19,7 @@ def is_notebook() -> bool:
 
 import os
 if is_notebook():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "4" #"1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "3" #"1"
     # os.environ['CUDA_LAUNCH_BLOCKING']="1"
     # os.environ['TORCH_USE_CUDA_DSA'] = "1"
 
@@ -76,6 +76,7 @@ from auto_circuit_tests.hypo_tests.equiv_test import (
     Side,
     equiv_test,
     sweep_search_smallest_equiv,
+    brute_force_equiv_test,
     plot_num_ablated_C_gt_M, 
     plot_circuit_and_model_scores,
     compute_knees, 
@@ -104,22 +105,22 @@ from auto_circuit_tests.tasks import TASK_DICT
 from auto_circuit_tests.utils import OUTPUT_DIR, RESULTS_DIR, repo_path_to_abs_path, load_cache, save_cache, save_json, load_json
 
 
-# In[78]:
+# In[4]:
 
 
 # config class
 @dataclass 
 class Config: 
-    task: str = "Docstring Component Circuit" # check how many edges in component circuit (probably do all but ioi toen)
-    use_abs: bool = False
+    task: str = "Docstring Token Circuit" # check how many edges in component circuit (probably do all but ioi toen)
+    use_abs: bool = True
     ablation_type: Union[AblationType, str] = AblationType.TOKENWISE_MEAN_CLEAN
     grad_func: Optional[Union[GradFunc, str]] = GradFunc.LOGIT
     answer_func: Optional[Union[AnswerFunc, str]] = AnswerFunc.MAX_DIFF
     ig_samples: Optional[int] = 10
     layerwise: bool = True
-    act_patch: bool = False
+    act_patch: bool = True
     alpha: float = 0.05
-    epsilon: Optional[float] = 0.0
+    epsilon: Optional[float] = 0.1
     q_star: float = 0.9 
     grad_func_mask: Optional[Union[GradFunc, str]] = None
     answer_func_mask: Optional[Union[AnswerFunc, str]] = None
@@ -164,7 +165,7 @@ class Config:
             self.side = Side.NONE if self.use_abs else Side.LEFT #TODO: fix this? for abs and negative epsilon?
 
 
-# In[79]:
+# In[5]:
 
 
 # initialize config 
@@ -176,7 +177,7 @@ if not is_notebook():
     conf = Config(**conf_dict)
 
 
-# In[80]:
+# In[6]:
 
 
 # handle directories
@@ -197,7 +198,7 @@ task_dir, ablation_dir, out_answer_dir, ps_dir, exp_dir = get_exp_dir(
 exp_dir.mkdir(parents=True, exist_ok=True)
 
 
-# In[81]:
+# In[7]:
 
 
 # initialize task
@@ -209,7 +210,7 @@ task.init_task()
 
 # ## Activation Patching Prune Scores
 
-# In[82]:
+# In[8]:
 
 
 # load from cache if exists 
@@ -228,7 +229,7 @@ if conf.act_patch and act_prune_scores is None:
 
 # ##  Attribution Patching Prune Scores
 
-# In[83]:
+# In[9]:
 
 
 if not conf.act_patch:
@@ -257,7 +258,7 @@ if not conf.act_patch:
 
 # ##  Compare Activation and Attribution Patching
 
-# In[84]:
+# In[10]:
 
 
 from auto_circuit.types import PruneScores
@@ -278,7 +279,7 @@ def flat_prune_scores_ordered(prune_scores: PruneScores, order: list[str], per_i
     return t.cat([prune_scores[mod_name].flatten(start_dim) for mod_name in order], cat_dim)
 
 
-# In[85]:
+# In[11]:
 
 
 if not conf.act_patch:
@@ -290,7 +291,7 @@ if not conf.act_patch:
 
 # ### MSE
 
-# In[86]:
+# In[12]:
 
 
 # mse and median se
@@ -317,7 +318,7 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # ### Kendall Tau
 
-# In[87]:
+# In[13]:
 
 
 # # order difference 
@@ -362,7 +363,7 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # ### Spearman Rank Correlation
 
-# In[88]:
+# In[14]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
@@ -383,7 +384,7 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # ### Plot Rank 
 
-# In[89]:
+# In[15]:
 
 
 def get_el_rank(x: t.Tensor) -> t.Tensor:
@@ -394,7 +395,7 @@ def get_el_rank(x: t.Tensor) -> t.Tensor:
     return rank
 
 
-# In[90]:
+# In[16]:
 
 
 # get rank for scores
@@ -403,7 +404,7 @@ if not conf.act_patch:
     attr_prune_scores_rank = get_el_rank(attr_prune_scores_flat.cpu())
 
 
-# In[91]:
+# In[17]:
 
 
 if not conf.act_patch:
@@ -415,7 +416,7 @@ if not conf.act_patch:
     plt.savefig(ps_dir / "rank_corr.png")
 
 
-# In[92]:
+# In[18]:
 
 
 # TODO: I think there must be a bug? 
@@ -433,7 +434,7 @@ if not conf.act_patch:
 
 # ### Compute Fraction of "Mis-Signed" Components
 
-# In[99]:
+# In[19]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
@@ -445,7 +446,7 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # ### Plot Scores
 
-# In[93]:
+# In[20]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
@@ -458,7 +459,7 @@ if not conf.act_patch and act_prune_scores is not None:
     plt.savefig(ps_dir / "act_attr_scores.png")
 
 
-# In[94]:
+# In[21]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
@@ -471,7 +472,7 @@ if not conf.act_patch and act_prune_scores is not None:
     plt.savefig(ps_dir / "act_attr_abs_scores.png")
 
 
-# In[ ]:
+# In[22]:
 
 
 # check if exp_dir is empty, and exit if so (temporary for running act patch comparisions without rerunning tests)
@@ -482,14 +483,14 @@ if len(list(exp_dir.iterdir())) != 0:
 
 # #  Minimal Faithful Circuit According to Prune Score Ordering
 
-# In[139]:
+# In[9]:
 
 
 # set prune scores
 prune_scores = act_prune_scores if conf.act_patch else attr_prune_scores
 
 
-# In[136]:
+# In[10]:
 
 
 model_out_train: dict[BatchKey, torch.Tensor] = {
@@ -502,10 +503,20 @@ model_out_test: dict[BatchKey, torch.Tensor] = {
 }
 
 
-# In[140]:
+# In[11]:
 
 
-equiv_results, min_equiv = sweep_search_smallest_equiv(
+interval = 10 ** math.floor(math.log10(task.model.n_edges)-1)
+# round task.model.n_edges to nearest interval
+rounded_n_edges = interval * round(task.model.n_edges / interval)
+
+
+# In[12]:
+
+
+# TODO: change to be uniform prior, accept if in interval with prob 1-alpha
+max_num_tests = rounded_n_edges / interval + 10 * math.floor(math.log10(task.model.n_edges)-1)
+equiv_results, min_equiv = brute_force_equiv_test(
     model=task.model, 
     dataloader=task.train_loader,
     prune_scores=prune_scores,
@@ -514,14 +525,39 @@ equiv_results, min_equiv = sweep_search_smallest_equiv(
     ablation_type=conf.ablation_type,
     use_abs=conf.use_abs,
     side=conf.side,
-    alpha=conf.alpha,
+    alpha=conf.alpha, # bf correction
     epsilon=conf.epsilon,
     model_out=model_out_train,
+    bayesian=True
 )
-save_json({k: result_to_json(v) for k, v in equiv_results.items()}, exp_dir, "equiv_results")
+print("min edges for equiv", min_equiv)
+# save_json({k: result_to_json(v) for k, v in equiv_results.items()}, exp_dir, "equiv_results")
 
 
-# In[30]:
+# In[ ]:
+
+
+# # TODO: change to be uniform prior, accept if in interval with prob 1-alpha
+# max_num_tests = rounded_n_edges / interval + 10 * math.floor(math.log10(task.model.n_edges)-1)
+# equiv_results, min_equiv = sweep_search_smallest_equiv(
+#     model=task.model, 
+#     dataloader=task.train_loader,
+#     prune_scores=prune_scores,
+#     grad_function=conf.grad_func, 
+#     answer_function=conf.answer_func,
+#     ablation_type=conf.ablation_type,
+#     use_abs=conf.use_abs,
+#     side=conf.side,
+#     alpha=conf.alpha, # bf correction
+#     epsilon=conf.epsilon,
+#     model_out=model_out_train,
+#     bayesian=True
+# )
+# print("min edges for equiv", min_equiv)
+# save_json({k: result_to_json(v) for k, v in equiv_results.items()}, exp_dir, "equiv_results")
+
+
+# In[13]:
 
 
 equiv_test_result = equiv_test(
@@ -536,12 +572,14 @@ equiv_test_result = equiv_test(
     side=conf.side,
     alpha=conf.alpha,
     epsilon=conf.epsilon,
-    model_out=model_out_test
+    model_out=model_out_test,
+    bayesian=True
 )[min_equiv]
-save_json(result_to_json(equiv_test_result), exp_dir, "equiv_test_result")
+print("equiv on test:", not equiv_test_result.not_equiv)
+# save_json(result_to_json(equiv_test_result), exp_dir, "equiv_test_result")
 
 
-# In[31]:
+# In[14]:
 
 
 threshold = prune_scores_threshold(prune_scores, min_equiv, use_abs=conf.use_abs)
@@ -550,14 +588,14 @@ edges = edges_from_mask(task.model.srcs, task.model.dests, edge_mask, token=task
 save_json([edge.name for edge in edges], exp_dir, "edges")
 
 
-# In[32]:
+# In[15]:
 
 
 # contruct a graph from the pruned circuit, to further prune
 circ_graph = SeqGraph(edges, token=task.token_circuit, attn_only=task.model.cfg.attn_only)
 
 
-# In[33]:
+# In[16]:
 
 
 valid_edges = [
@@ -570,6 +608,7 @@ valid_edges = [
     )
 ]
 min_equiv_valid_edges = len(valid_edges)
+print("min equiv valid edges", min_equiv_valid_edges)
 save_json([edge.name for edge in valid_edges], exp_dir, "valid_edges")
 # mask out all edges not in edges to dest
 # edge_score_mask = {k: ((torch.abs(v) if conf.use_abs else v) >= threshold).to(torch.int) for k, v in prune_scores.items()}
@@ -579,7 +618,7 @@ if not sum([torch.sum(((torch.abs(v) if conf.use_abs else v) >= threshold) & (v 
     print("Warning - valid edge scores do not match valid edges")
 
 
-# In[34]:
+# In[17]:
 
 
 # from elk_experiments.auto_circuit.circuit_hypotests import equiv_test
@@ -599,10 +638,11 @@ valid_edges_equiv_result = next(iter(equiv_test(
     alpha=conf.alpha,
     epsilon=conf.epsilon,
 ).values()))
+print("valid edges equiv:", not valid_edges_equiv_result.not_equiv)
 save_json(result_to_json(valid_edges_equiv_result), exp_dir, "valid_edges_equiv_result")
 
 
-# In[42]:
+# In[18]:
 
 
 # set cicuit under test
@@ -616,7 +656,7 @@ edges_under_test_scores = {edge: prune_scores[edge.dest.module_name][edge.patch_
 edges_under_test = sorted(edges_under_test_scores.keys(), key=lambda x: abs(edges_under_test_scores[x]), reverse=False)
 
 
-# In[43]:
+# In[19]:
 
 
 fig = draw_seq_graph(
@@ -632,21 +672,21 @@ fig = draw_seq_graph(
 fig.write_image(repo_path_to_abs_path(exp_dir / "valid_edge_graph.png"))
 
 
-# In[44]:
+# In[20]:
 
 
 fig, ax = plot_num_ablated_C_gt_M(equiv_results, epsilon=conf.epsilon, min_equiv=min_equiv, side=conf.side)
 fig.savefig(repo_path_to_abs_path(exp_dir / "num_ablated_C_gt_M.png"))
 
 
-# In[45]:
+# In[21]:
 
 
 fig, ax = plot_circuit_and_model_scores(equiv_results, min_equiv)
 fig.savefig(repo_path_to_abs_path(exp_dir / "circuit_model_scores.png"))
 
 
-# In[46]:
+# In[22]:
 
 
 # plot attribution scores 
@@ -659,7 +699,7 @@ fig, ax = plot_edge_scores_and_knees(edge_scores, kneedle_poly, kneedle_1d, min_
 fig.savefig(repo_path_to_abs_path(exp_dir / "edge_scores_knees.png"))
 
 
-# In[47]:
+# In[23]:
 
 
 # zoom in to attribution scores
@@ -670,7 +710,7 @@ fig.savefig(repo_path_to_abs_path(exp_dir / "edge_scores_knees_linear.png"))
 fig
 
 
-# In[48]:
+# In[24]:
 
 
 if min_equiv == task.model.n_edges:
@@ -679,6 +719,49 @@ if min_equiv == task.model.n_edges:
 
 
 # # Minimality Test
+
+# ## Minimality Equiv (Bayesian) Test
+
+# In[26]:
+
+
+from auto_circuit_tests.hypo_tests.minimality_test import minimality_equiv_test
+
+
+# In[36]:
+
+
+# is this right? 
+# we want to say the probability not in range is > 95% 
+# currently we're saying probability in range < 95% -> not in range > 5%
+
+min_equiv_test_results = minimality_equiv_test(
+    model=task.model,
+    dataloader=task.train_loader,
+    prune_scores=circuit_prune_scores,
+    edges=edges_under_test,
+    ablation_type=conf.ablation_type,
+    grad_function=conf.grad_func,
+    answer_function=conf.answer_func,
+    edge_count=min_equiv,
+    full_model_out=model_out_train,
+    use_abs=conf.use_abs,
+    alpha=conf.alpha,
+    epsilon=conf.epsilon,
+    all_edges=True
+)
+save_json({str(e): result_to_json(r) for e, r in min_equiv_test_results.items()}, exp_dir, "min_equiv_test_results")
+
+
+# In[45]:
+
+
+# can assess based on equivalence preserving (e.g. p > alpha), or confident not required (p > 1-alpha)
+# currently assessing based on equivalence preserving, but can compute both in post-processing
+[r.p_value for r in min_equiv_test_results.values()]
+
+
+# ## Minimality Inflation (Frequentist) Test
 
 # In[49]:
 
@@ -811,6 +894,64 @@ if not true_edges_tested:
 
 
 # # Independence Test
+
+# ## Independence Equivalence (Bayesian) Test
+
+# Tests whether a fully ablated model is equivalent to the full model with the circuit ablated 
+
+# In[ ]:
+
+
+from auto_circuit_tests.hypo_tests.indep_test import independence_equiv_test
+
+
+# In[75]:
+
+
+from auto_circuit.prune import run_circuits
+from auto_circuit.types import PatchType
+model = task.model
+dataloader = task.train_loader
+ablation_type = conf.ablation_type
+use_abs = conf.use_abs
+
+ps_empty = model.new_prune_scores()
+ps_empty = {mod_name: torch.zeros_like(score) for mod_name, score in ps_empty.items()}
+
+# fully ablated model
+ablated_out = next(iter(run_circuits(
+    model=model, 
+    dataloader=dataloader,
+    test_edge_counts=[model.n_edges],
+    prune_scores=ps_empty,
+    patch_type=PatchType.EDGE_PATCH,
+    ablation_type=ablation_type,
+    reverse_clean_corrupt=False,
+    use_abs=use_abs,
+).values()))
+
+
+# In[68]:
+
+
+indep_result = independence_equiv_test(
+    model=task.model,
+    dataloader=task.test_loader,
+    prune_scores=circuit_prune_scores,
+    ablation_type=conf.ablation_type,
+    grad_function=conf.grad_func,
+    answer_function=conf.answer_func,
+    threshold=threshold,
+    use_abs=conf.use_abs,
+    alpha=conf.alpha,
+    epsilon=conf.epsilon
+)
+save_json(result_to_json(indep_result), exp_dir, "indep_equiv_result")
+
+
+# ## Independence HCIC (Frequentist) Test
+
+# 
 # Test for completeness - if the circuit contains all the components required to perform the task, then the output of the complement should be independent of the original model
 # 
 # $H_0$: Score of complement indepedendent of score of model

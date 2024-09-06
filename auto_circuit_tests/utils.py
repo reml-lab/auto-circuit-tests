@@ -8,6 +8,7 @@ from typing import Dict, Any
 import torch
 
 from auto_circuit.types import AblationType
+from auto_circuit.types import Edge
 from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc
 
 
@@ -114,3 +115,6 @@ def get_exp_dir(
     ps_dir = out_answer_dir / (f"{ig_samples}_{layerwise}" if not act_patch else "act_patch")
     exp_dir = ps_dir / f"{use_abs}_{alpha}_{epsilon}_{q_star}"
     return task_dir, ablation_dir, out_answer_dir, ps_dir, exp_dir
+
+def edge_key(edge: Edge):
+    return (edge.src.name, edge.dest.name, edge.seq_idx)

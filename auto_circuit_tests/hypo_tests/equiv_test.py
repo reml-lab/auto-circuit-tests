@@ -13,6 +13,7 @@ from auto_circuit.prune import run_circuits
 from auto_circuit.types import (
     CircuitOutputs, 
     BatchKey,
+    BatchOutputs,
     PruneScores,
     PatchType, 
     AblationType,
@@ -52,30 +53,40 @@ def compute_num_C_gt_M(
         model_scores.append(model_score)
     return num_ablated_C_gt_M, n, torch.cat(circ_scores), torch.cat(model_scores)
 
-# ok 
 def run_non_equiv_test(
     num_ablated_C_gt_M: int, 
     n: int, 
     alpha: float = 0.05, 
     epsilon: float = 0.1, 
-    side: Side = Side.NONE
+    side: Side = Side.NONE,
+    bayesian: bool = False
 ) -> tuple[bool, float]:
-    k = num_ablated_C_gt_M
-    if side == Side.LEFT: # binomial test for p_success < 0.5 - epsilon
-        theta = 1 / 2 - epsilon
-        p_value = binom.cdf(k, n, theta)
-    elif side == Side.RIGHT: # binomail test for p_success > 0.5 + epsilon (typically don't use)
-        theta = 1 / 2 + epsilon
-        p_value = 1 - binom.cdf(k, n, theta)
-    else: # standard two-tailed test from the paper
-        theta = 1 / 2 + epsilon
+    if not bayesian:
         k = num_ablated_C_gt_M
-        left_tail = binom.cdf(min(n-k, k), n, theta)
-        right_tail = 1 - binom.cdf(max(n-k, k), n, theta)
-        p_value = left_tail + right_tail
-    return bool(p_value < alpha), p_value 
+        if side == Side.LEFT: # binomial test for p_success < 0.5 - epsilon
+            theta = 1 / 2 - epsilon
+            p_value = binom.cdf(k, n, theta)
+        elif side == Side.RIGHT: # binomail test for p_success > 0.5 + epsilon (typically don't use)
+            theta = 1 / 2 + epsilon
+            p_value = 1 - binom.cdf(k, n, theta)
+        else: # standard two-tailed test from the paper
+            theta = 1 / 2 + epsilon
+            k = num_ablated_C_gt_M
+            left_tail = binom.cdf(min(n-k, k), n, theta)
+            right_tail = 1 - binom.cdf(max(n-k, k), n, theta)
+            p_value = left_tail + right_tail
+        return bool(p_value < alpha), p_value 
+    return bernoulli_range_test(num_ablated_C_gt_M, n, eps=epsilon, alpha=alpha)
 
-def bernoulli_range_test(K,N,eps=0.1,a=[1,1],alpha=0.5):
+
+
+def bernoulli_range_test(
+    K,
+    N,
+    eps=0.1,
+    a=[1,1],
+    alpha=0.5
+):
     #Inputs:
     #  K: number of successes
     #  N: number of trials
@@ -105,13 +116,16 @@ def equiv_test(
     grad_function: GradFunc,
     answer_function: AnswerFunc,
     ablation_type: AblationType,
+    patch_type: PatchType = PatchType.TREE_PATCH,
     edge_counts: Optional[list[int]] = None,
+    thresholds: Optional[list[float]] = None,
     use_abs: bool = True,
-    model_out: Optional[Dict[BatchKey, torch.Tensor]] = None,
+    model_out: Optional[BatchOutputs] = None,
     full_model: Optional[torch.nn.Module] = None,
     side: Side = Side.NONE,
     alpha: float = 0.05,
     epsilon: float = 0.1,
+    bayesian: bool = False,
 ) -> Dict[int, EquivResult]:
 
     # circuit out
@@ -119,8 +133,9 @@ def equiv_test(
         model=model, 
         dataloader=dataloader,
         test_edge_counts=edge_counts,
+        thresholds=thresholds,
         prune_scores=prune_scores,
-        patch_type=PatchType.TREE_PATCH,
+        patch_type=patch_type,
         ablation_type=ablation_type,
         reverse_clean_corrupt=False,
         use_abs=use_abs,
@@ -139,7 +154,7 @@ def equiv_test(
         num_ablated_C_gt_M, n, circ_scores, model_scores = compute_num_C_gt_M(
             circuit_out, model_out, dataloader, grad_function, answer_function
         )
-        not_equiv, p_value = run_non_equiv_test(num_ablated_C_gt_M, n, alpha, epsilon, side=side)
+        not_equiv, p_value = run_non_equiv_test(num_ablated_C_gt_M, n, alpha, epsilon, side=side, bayesian=bayesian)
         test_results[edge_count] = EquivResult(
             num_ablated_C_gt_M, 
             n, 
@@ -149,6 +164,52 @@ def equiv_test(
             model_scores.detach().cpu()
         )
     return test_results
+
+# ok we want to intelligently search for the smallest number of edges that produce a circuit within epsilon of the model with p > 1-alpha
+# for now lets just brute force search 
+
+def brute_force_equiv_test(
+    model: PatchableModel,
+    dataloader: PromptDataLoader,
+    prune_scores: PruneScores,
+    grad_function: GradFunc,
+    answer_function: AnswerFunc,
+    ablation_type: AblationType, 
+    use_abs: bool = True,
+    side: Side = Side.NONE,
+    alpha: float = 0.05,
+    epsilon: float = 0.1,
+    bayesian: bool = False,
+    model_out: Optional[Dict[BatchKey, torch.Tensor]] = None,
+): 
+    full_results = {}
+    edge_count_iter = tqdm(range(1, model.n_edges + 1), desc="Equiv Test")
+    for edge_count in edge_count_iter:
+        equiv_result_dict = equiv_test(
+            model=model, 
+            dataloader=dataloader,
+            prune_scores=prune_scores,
+            grad_function=grad_function,
+            answer_function=answer_function,
+            ablation_type=ablation_type,
+            edge_counts=[edge_count],
+            use_abs=use_abs,
+            side=side,
+            alpha=alpha,
+            epsilon=epsilon,
+            bayesian=bayesian,
+            model_out=model_out,
+        )
+        assert len(equiv_result_dict) == 1
+        full_results.update(equiv_result_dict)
+        edge_count = next(iter(equiv_result_dict.keys()))
+        # add p value to description
+        equiv_result = equiv_result_dict[edge_count]
+        edge_count_iter.set_description(
+            f"Equiv Test: {edge_count} p={equiv_result.p_value:.3f}, k={equiv_result.num_ablated_C_gt_M}, n={equiv_result.n}")
+        if not equiv_result.not_equiv:
+            break
+    return {k: full_results[k] for k in sorted(full_results.keys())}, edge_count
 
 
 def sweep_search_smallest_equiv(
@@ -162,6 +223,7 @@ def sweep_search_smallest_equiv(
     side: Side = Side.NONE,
     alpha: float = 0.05,
     epsilon: float = 0.1,
+    bayesian: bool = False,
     model_out: Optional[Dict[BatchKey, torch.Tensor]] = None,
 ) -> tuple[dict[int, EquivResult], int]:
     """Returns equiv test results and minimal equivalent number of edges."""
@@ -190,6 +252,7 @@ def sweep_search_smallest_equiv(
             side=side,
             alpha=alpha,
             epsilon=epsilon,
+            bayesian=bayesian,
         )
         full_results.update(test_results)
         # find lowest interval where equivalence holds
@@ -228,6 +291,7 @@ def bin_search_smallest_equiv(
     side: Side = Side.NONE,
     alpha: float = 0.05,
     epsilon: float = 0.1,
+    bayesian: bool = False,
 ):
     edge_count_interval = [i for i in range(model.n_edges + 1)]
     min_equiv = edge_count_interval[-1]
@@ -250,6 +314,7 @@ def bin_search_smallest_equiv(
             side=side,
             alpha=alpha,
             epsilon=epsilon,
+            bayesian=bayesian,
         ).values()))
 
         if not_equiv:

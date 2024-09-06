@@ -12,6 +12,7 @@ from auto_circuit.utils.patchable_model import PatchableModel
 from auto_circuit.utils.custom_tqdm import tqdm
 
 from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, get_score_func
+from auto_circuit_tests.hypo_tests.equiv_test import equiv_test
 
 
 
@@ -91,3 +92,102 @@ def independence_test(
     # p value = t / B (higher p value -> more instances greater than t_obs -> more likely to be independent)
     p_value = t / B
     return IndepResults(not_indep=bool(p_value < alpha), p_value=p_value)
+
+
+class IndepEquivResults(NamedTuple):
+    indep: bool
+    num_ablated_C_gt_M: int 
+    n: int 
+    p_value: float
+    circ_scores: torch.Tensor
+    model_scores: torch.Tensor
+
+
+# def independence_equiv_test(
+#     model: PatchableModel,
+#     dataloader: PromptDataLoader,
+#     prune_scores: PruneScores,
+#     ablation_type: AblationType,
+#     grad_function: GradFunc,
+#     answer_function: AnswerFunc,
+#     threshold: float,
+#     use_abs: bool,
+#     alpha: float = 0.05,
+#     epsilon: float = 0.1
+# ): 
+#     # run equiv test with edge pathing 
+#     equiv_result = next(iter(equiv_test(
+#        model=model, 
+#        dataloader=dataloader,
+#         prune_scores=prune_scores,
+#         grad_function=grad_function,
+#         answer_function=answer_function,
+#         ablation_type=ablation_type,
+#         patch_type=PatchType.EDGE_PATCH,
+#         thresholds=[threshold],
+#         use_abs=use_abs,
+#         alpha=alpha,
+#         epsilon=epsilon,
+#         bayesian=True
+#     ).values()))
+#     p_value = 1 - equiv_result.p_value # probability of not being equivalent
+#     indep_result = IndepEquivResults(
+#         indep=equiv_result.p_value < alpha, # < alpha % chance of being equivalent -> >1-alpha % chance of being non-equivalent
+#         num_ablated_C_gt_M=equiv_result.num_ablated_C_gt_M,
+#         n=equiv_result.n,
+#         p_value=p_value,
+#         circ_scores=equiv_result.circ_scores,
+#         model_scores=equiv_result.model_scores
+#     )
+#     return indep_result
+
+# is fully ablated model equiv to model with ablated circuit
+def independence_equiv_test(
+    model: PatchableModel,
+    dataloader: PromptDataLoader,
+    prune_scores: PruneScores,
+    ablation_type: AblationType,
+    grad_function: GradFunc,
+    answer_function: AnswerFunc,
+    threshold: float,
+    use_abs: bool,
+    alpha: float = 0.05,
+    epsilon: float = 0.1
+): 
+    # fully ablated model
+    ablated_out = next(iter(run_circuits(
+        model=model, 
+        dataloader=dataloader,
+        test_edge_counts=[model.n_edges],
+        prune_scores=model.new_prune_scores(),
+        patch_type=PatchType.EDGE_PATCH,
+        ablation_type=ablation_type,
+        reverse_clean_corrupt=False,
+        use_abs=use_abs,
+    ).values()))
+    
+    # run equiv test with edge pathing 
+    equiv_result = next(iter(equiv_test(
+       model=model, 
+       dataloader=dataloader,
+        prune_scores=prune_scores,
+        grad_function=grad_function,
+        answer_function=answer_function,
+        ablation_type=ablation_type,
+        patch_type=PatchType.EDGE_PATCH,
+        thresholds=[threshold],
+        model_out=ablated_out,
+        use_abs=use_abs,
+        alpha=alpha,
+        epsilon=epsilon,
+        bayesian=True
+    ).values()))
+    indep_result = IndepEquivResults(
+        indep=not equiv_result.not_equiv, # < alpha % chance of being equivalent -> >1-alpha % chance of being non-equivalent
+        num_ablated_C_gt_M=equiv_result.num_ablated_C_gt_M,
+        n=equiv_result.n,
+        p_value=equiv_result.p_value,
+        circ_scores=equiv_result.circ_scores,
+        model_scores=equiv_result.model_scores
+    )
+    return indep_result
