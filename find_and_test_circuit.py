@@ -183,7 +183,7 @@ if not is_notebook():
 from auto_circuit_tests.utils import get_exp_dir
 task_dir, ablation_dir, out_answer_dir, ps_dir, exp_dir = get_exp_dir(
     task_key=conf.task, 
-    ablation_key=conf.ablation_type,
+    ablation_type=conf.ablation_type,
     grad_func=conf.grad_func,
     answer_func=conf.answer_func,
     ig_samples=conf.ig_samples,
