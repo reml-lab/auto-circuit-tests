@@ -104,19 +104,19 @@ from auto_circuit_tests.tasks import TASK_DICT
 from auto_circuit_tests.utils import OUTPUT_DIR, RESULTS_DIR, repo_path_to_abs_path, load_cache, save_cache, save_json, load_json
 
 
-# In[117]:
+# In[78]:
 
 
 # config class
 @dataclass 
 class Config: 
-    task: str = "Docstring Token Circuit" # check how many edges in component circuit (probably do all but ioi toen)
+    task: str = "Docstring Component Circuit" # check how many edges in component circuit (probably do all but ioi toen)
     use_abs: bool = False
     ablation_type: Union[AblationType, str] = AblationType.TOKENWISE_MEAN_CLEAN
     grad_func: Optional[Union[GradFunc, str]] = GradFunc.LOGIT
     answer_func: Optional[Union[AnswerFunc, str]] = AnswerFunc.MAX_DIFF
-    ig_samples: Optional[int] = None
-    layerwise: bool = False
+    ig_samples: Optional[int] = 10
+    layerwise: bool = True
     act_patch: bool = False
     alpha: float = 0.05
     epsilon: Optional[float] = 0.0
@@ -164,7 +164,7 @@ class Config:
             self.side = Side.NONE if self.use_abs else Side.LEFT #TODO: fix this? for abs and negative epsilon?
 
 
-# In[118]:
+# In[79]:
 
 
 # initialize config 
@@ -176,7 +176,7 @@ if not is_notebook():
     conf = Config(**conf_dict)
 
 
-# In[119]:
+# In[80]:
 
 
 # handle directories
@@ -194,9 +194,10 @@ task_dir, ablation_dir, out_answer_dir, ps_dir, exp_dir = get_exp_dir(
     epsilon=conf.epsilon,
     q_star=conf.q_star,
 )
+exp_dir.mkdir(parents=True, exist_ok=True)
 
 
-# In[120]:
+# In[81]:
 
 
 # initialize task
@@ -208,7 +209,7 @@ task.init_task()
 
 # ## Activation Patching Prune Scores
 
-# In[121]:
+# In[82]:
 
 
 # load from cache if exists 
@@ -227,7 +228,7 @@ if conf.act_patch and act_prune_scores is None:
 
 # ##  Attribution Patching Prune Scores
 
-# In[122]:
+# In[83]:
 
 
 if not conf.act_patch:
@@ -256,7 +257,7 @@ if not conf.act_patch:
 
 # ##  Compare Activation and Attribution Patching
 
-# In[123]:
+# In[84]:
 
 
 from auto_circuit.types import PruneScores
@@ -277,7 +278,7 @@ def flat_prune_scores_ordered(prune_scores: PruneScores, order: list[str], per_i
     return t.cat([prune_scores[mod_name].flatten(start_dim) for mod_name in order], cat_dim)
 
 
-# In[124]:
+# In[85]:
 
 
 if not conf.act_patch:
@@ -289,7 +290,7 @@ if not conf.act_patch:
 
 # ### MSE
 
-# In[125]:
+# In[86]:
 
 
 # mse and median se
@@ -316,7 +317,7 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # ### Kendall Tau
 
-# In[126]:
+# In[87]:
 
 
 # # order difference 
@@ -361,16 +362,13 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # ### Spearman Rank Correlation
 
-# In[127]:
+# In[88]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
     from scipy import stats 
     abs_corr, abs_p_value = stats.spearmanr(act_prune_scores_flat.abs().cpu(), attr_prune_scores_flat.abs().cpu())
-    pos_attr_prune_scores_idx = attr_prune_scores_flat > 0
-    attr_prune_scores_pos = attr_prune_scores_flat[pos_attr_prune_scores_idx]
-    act_prune_scores_pos = act_prune_scores_flat[pos_attr_prune_scores_idx]
-    corr, p_value = stats.spearmanr(act_prune_scores_pos.cpu(), attr_prune_scores_pos.cpu())
+    corr, p_value = stats.spearmanr(act_prune_scores_flat.cpu(), attr_prune_scores_flat.cpu())
     print(f"abs corr: {abs_corr}, abs p-value: {abs_p_value}")
     print(f"corr: {corr}, p-value: {p_value}")
 
@@ -385,7 +383,7 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # ### Plot Rank 
 
-# In[128]:
+# In[89]:
 
 
 def get_el_rank(x: t.Tensor) -> t.Tensor:
@@ -396,7 +394,7 @@ def get_el_rank(x: t.Tensor) -> t.Tensor:
     return rank
 
 
-# In[129]:
+# In[90]:
 
 
 # get rank for scores
@@ -405,44 +403,60 @@ if not conf.act_patch:
     attr_prune_scores_rank = get_el_rank(attr_prune_scores_flat.cpu())
 
 
-# In[131]:
+# In[91]:
 
 
-# TODO: plot x=0
-plt.scatter(act_prune_scores_rank, attr_prune_scores_rank, s=0.1)
-plt.xlabel("Act Patch Rank")
-plt.ylabel("Attrib Patch Rank")
-plt.title("Rank Correlation")
-plt.savefig(ps_dir / "rank_corr.png")
+if not conf.act_patch:
+    # TODO: plot x=0
+    plt.scatter(act_prune_scores_rank, attr_prune_scores_rank, s=0.1)
+    plt.xlabel("Act Patch Rank")
+    plt.ylabel("Attrib Patch Rank")
+    plt.title("Rank Correlation")
+    plt.savefig(ps_dir / "rank_corr.png")
 
 
-# In[105]:
+# In[92]:
 
 
 # TODO: I think there must be a bug? 
 # get rank for scores
 if not conf.act_patch:
-    act_prune_scores_rank = get_el_rank(act_prune_scores_flat.abs().cpu())
-    attr_prune_scores_rank = get_el_rank(attr_prune_scores_flat.abs().cpu())
+    act_prune_scores_abs_rank = get_el_rank(act_prune_scores_flat.abs().cpu())
+    attr_prune_scores_abs_rank = get_el_rank(attr_prune_scores_flat.abs().cpu())
 
-plt.scatter(act_prune_scores_rank, attr_prune_scores_rank, s=0.1)
-plt.xlabel("Act Patch Rank")
-plt.ylabel("Attrib Patch Rank")
-plt.title("Rank Correlation Abs")
-plt.savefig(ps_dir / "rank_corr_abs.png")
+    plt.scatter(act_prune_scores_abs_rank, attr_prune_scores_abs_rank, s=0.1)
+    plt.xlabel("Act Patch Rank")
+    plt.ylabel("Attrib Patch Rank")
+    plt.title("Rank Correlation Abs")
+    plt.savefig(ps_dir / "rank_corr_abs.png")
 
 
 # ### Plot Scores
 
-# In[107]:
+# In[93]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
     # plot scores on x, y
-    plt.scatter(act_prune_scores_flat.cpu(), attr_prune_scores_flat.cpu(), alpha=0.1)
+    plt.scatter(act_prune_scores_flat.cpu(), attr_prune_scores_flat.cpu(), alpha=0.25)
     plt.xlabel("Act Patch Scores")
     plt.ylabel("Attrib Patch Scores")
+    plt.xscale("symlog")
+    plt.yscale("symlog")
     plt.savefig(ps_dir / "act_attr_scores.png")
+
+
+# In[94]:
+
+
+if not conf.act_patch and act_prune_scores is not None:
+    # plot scores on x, y
+    plt.scatter(act_prune_scores_flat.abs().cpu(), attr_prune_scores_flat.abs().cpu(), alpha=0.25)
+    plt.xlabel("Act Patch Scores")
+    plt.ylabel("Attrib Patch Scores")
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.savefig(ps_dir / "act_attr_abs_scores.png")
 
 
 # In[ ]:
