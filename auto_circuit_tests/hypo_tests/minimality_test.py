@@ -57,10 +57,9 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
     tokens: bool = False,
     alpha: float = 0.05,
     q_star: float = 0.9,
-    max_edges_in_order: Optional[int] = None,
-    max_edges_in_order_without_fail: Optional[int] = None,
-    max_edges_to_sample: int = 0
-) -> Tuple[Dict[Edge, MinResult], Dict[Edge, MinResult]]:
+    max_edges_in_order: int = 0,
+    max_edges_in_order_without_fail: int = 0,
+) -> Dict[Edge, MinResult]:
     if circuit_out is None:
         circuit_out = dict(next(iter(run_circuits(
             model=model, 
@@ -160,15 +159,7 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
         if i >= max_edges_in_order_without_fail:
             break
     
-    # if failed, samples without replacement and run minimality test
-    sampled_test_results = {}
-    if has_failed:
-        sampled_edges = random.sample(edges, min(max_edges_to_sample, len(edges)))
-        for edge in tqdm(sampled_edges):
-            result = test_edge(edge)
-            sampled_test_results[edge] = result
-    
-    return ordered_test_results, sampled_test_results
+    return ordered_test_results
 
 def minimality_test_edge(
     model: PatchableModel,

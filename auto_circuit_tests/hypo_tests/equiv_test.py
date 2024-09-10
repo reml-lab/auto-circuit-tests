@@ -181,9 +181,17 @@ def brute_force_equiv_test(
     epsilon: float = 0.1,
     bayesian: bool = False,
     model_out: Optional[Dict[BatchKey, torch.Tensor]] = None,
+    start_edge_count: int = 1,
+    reverse: bool = False,
 ): 
     full_results = {}
-    edge_count_iter = tqdm(range(1, model.n_edges + 1), desc="Equiv Test")
+    if not reverse:
+        stop_count = model.n_edges + 1 
+        incr = 1
+    else:
+        stop_count = 0
+        incr = -1
+    edge_count_iter = tqdm(range(start_edge_count, stop_count, incr), desc="Equiv Test")
     for edge_count in edge_count_iter:
         equiv_result_dict = equiv_test(
             model=model, 
