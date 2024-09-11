@@ -1,5 +1,6 @@
 from enum import Enum
 from functools import partial
+from typing import Callable
 
 import torch 
 import torch as t
@@ -39,7 +40,7 @@ ANSWER_FUNC_DICT = {
     AnswerFunc.MSE: lambda vals, batch: t.nn.functional.mse_loss(vals, batch.answers)
 }
 
-def get_score_func(grad_func: GradFunc, answer_func: AnswerFunc):
+def get_score_func(grad_func: GradFunc, answer_func: AnswerFunc) -> Callable[[t.Tensor, PromptPairBatch], t.Tensor]:
     grad_func = GRAD_FUNC_DICT[grad_func]
     answer_func = ANSWER_FUNC_DICT[answer_func]
     return lambda vals, batch: answer_func(grad_func(vals), batch)

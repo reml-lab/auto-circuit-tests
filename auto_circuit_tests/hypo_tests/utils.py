@@ -17,6 +17,8 @@ from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, get_score_func
 
 
 
+
+
 def compute_frac_perf_recovered(
     model: PatchableModel, 
     dataloader: PromptDataLoader,
@@ -53,15 +55,11 @@ def compute_frac_perf_recovered(
         }
     # compute ablated model out 
     if ablated_model_outs is None:
-       ablated_model_outs: BatchOutputs = next(iter(run_circuits(
-            model=model, 
-            dataloader=dataloader, 
-            prune_scores=model.new_prune_scores(), 
-            test_edge_counts=[model.n_edges],
-            patch_type=PatchType.EDGE_PATCH,
+       ablated_model_outs: BatchOutputs = run_fully_ablated_model(
+            model=model,
+            dataloader=dataloader,
             ablation_type=ablation_type,
-            reverse_clean_corrupt=True if ablation_type == AblationType.RESAMPLE else False, 
-        ).values()))
+        )
     # compute circuit out
     circuit_outs: BatchOutputs = next(iter(run_circuits(
         model=model, 

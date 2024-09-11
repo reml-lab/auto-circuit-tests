@@ -24,7 +24,7 @@ from auto_circuit.utils.custom_tqdm import tqdm
 from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, get_score_func
 from auto_circuit_tests.edge_graph import SeqGraph, sample_paths 
 from auto_circuit_tests.hypo_tests.utils import edges_from_mask,  set_score
-from auto_circuit_tests.utils import edge_key
+from auto_circuit_tests.utils.utils import edge_key
 
 
 

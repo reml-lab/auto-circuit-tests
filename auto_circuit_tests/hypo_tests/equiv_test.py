@@ -54,29 +54,29 @@ def compute_num_C_gt_M(
     return num_ablated_C_gt_M, n, torch.cat(circ_scores), torch.cat(model_scores)
 
 def run_non_equiv_test(
-    num_ablated_C_gt_M: int, 
+    k: int, 
     n: int, 
     alpha: float = 0.05, 
     epsilon: float = 0.1, 
-    side: Side = Side.NONE,
-    bayesian: bool = False
+    null_equiv: bool=True
 ) -> tuple[bool, float]:
-    if not bayesian:
-        k = num_ablated_C_gt_M
-        if side == Side.LEFT: # binomial test for p_success < 0.5 - epsilon
-            theta = 1 / 2 - epsilon
-            p_value = binom.cdf(k, n, theta)
-        elif side == Side.RIGHT: # binomail test for p_success > 0.5 + epsilon (typically don't use)
-            theta = 1 / 2 + epsilon
-            p_value = 1 - binom.cdf(k, n, theta)
-        else: # standard two-tailed test from the paper
-            theta = 1 / 2 + epsilon
-            k = num_ablated_C_gt_M
-            left_tail = binom.cdf(min(n-k, k), n, theta)
-            right_tail = 1 - binom.cdf(max(n-k, k), n, theta)
-            p_value = left_tail + right_tail
-        return bool(p_value < alpha), p_value 
-    return bernoulli_range_test(num_ablated_C_gt_M, n, eps=epsilon, alpha=alpha)
+    # if null equiv, run standard two-tailed test from paper
+    if null_equiv:
+        theta = 1 / 2 + epsilon
+        left_tail = binom.cdf(min(n-k, k), n, theta)
+        right_tail = 1 - binom.cdf(max(n-k, k), n, theta)
+        p_value = left_tail + right_tail
+        reject_null = p_value < alpha 
+    else: 
+        # run two one-tailed tests (TOTS)
+        # assume p = 1/2 + epsilon
+        # compute probability of <= k successes given p 
+        left_tail = binom.cdf(k, n, 1 / 2 + epsilon)
+        # then assume p = 1/2 - epsilon
+        # compute probability of >= k successes given p
+        right_tail = 1 - binom.cdf(k, n, 1 / 2 - epsilon)
+        reject_null = left_tail < alpha and right_tail < alpha
+    return reject_null, left_tail, right_tail
 
 
 
@@ -104,12 +104,14 @@ def bernoulli_range_test(
 class EquivResult(NamedTuple):
     num_ablated_C_gt_M: int
     n: int
-    not_equiv: bool
-    p_value: float
+    null_equiv: bool
+    reject_null: bool
+    left_tail: float
+    right_tail: float
     circ_scores: torch.Tensor
     model_scores: torch.Tensor
 
-def equiv_test(
+def equiv_tests(
     model: PatchableModel, 
     dataloader: PromptDataLoader,
     prune_scores: PruneScores,
@@ -119,34 +121,31 @@ def equiv_test(
     patch_type: PatchType = PatchType.TREE_PATCH,
     edge_counts: Optional[list[int]] = None,
     thresholds: Optional[list[float]] = None,
-    use_abs: bool = True,
     model_out: Optional[BatchOutputs] = None,
-    full_model: Optional[torch.nn.Module] = None,
-    side: Side = Side.NONE,
+    circuit_outs: Optional[CircuitOutputs] = None,
+    null_equiv: bool = True,
     alpha: float = 0.05,
     epsilon: float = 0.1,
-    bayesian: bool = False,
 ) -> Dict[int, EquivResult]:
 
     # circuit out
-    circuit_outs = dict(run_circuits(
-        model=model, 
-        dataloader=dataloader,
-        test_edge_counts=edge_counts,
-        thresholds=thresholds,
-        prune_scores=prune_scores,
-        patch_type=patch_type,
-        ablation_type=ablation_type,
-        reverse_clean_corrupt=False,
-        use_abs=use_abs,
-    ))
+    if circuit_outs is None:
+        circuit_outs = run_circuits(
+            model=model, 
+            dataloader=dataloader,
+            test_edge_counts=edge_counts,
+            thresholds=thresholds,
+            prune_scores=prune_scores,
+            patch_type=patch_type,
+            ablation_type=ablation_type,
+            reverse_clean_corrupt=False,
+        )
     
     # model out
     if model_out is None:
-        model_out = {}
-        ref_model = full_model if full_model is not None else model
-        for batch in dataloader:
-            model_out[batch.key] = ref_model(batch.clean)[model.out_slice]
+        model_out = {
+            batch.key: model(batch.clean)[model.out_slice] for batch in dataloader
+        }
     
     # run statitiscal tests for each edge count
     test_results = {}
@@ -154,19 +153,23 @@ def equiv_test(
         num_ablated_C_gt_M, n, circ_scores, model_scores = compute_num_C_gt_M(
             circuit_out, model_out, dataloader, grad_function, answer_function
         )
-        not_equiv, p_value = run_non_equiv_test(num_ablated_C_gt_M, n, alpha, epsilon, side=side, bayesian=bayesian)
+        reject_nul, left_tail, right_tail = run_non_equiv_test(
+            num_ablated_C_gt_M, n, alpha, epsilon, null_equiv=null_equiv
+        )
         test_results[edge_count] = EquivResult(
             num_ablated_C_gt_M, 
             n, 
-            not_equiv, 
-            p_value, 
-            circ_scores.detach().cpu(), 
-            model_scores.detach().cpu()
+            null_equiv=null_equiv,
+            reject_null=reject_nul,
+            left_tail=left_tail,
+            right_tail=right_tail,
+            circ_scores=circ_scores.detach().cpu(), 
+            model_scores=model_scores.detach().cpu()
         )
     return test_results
 
-# ok we want to intelligently search for the smallest number of edges that produce a circuit within epsilon of the model with p > 1-alpha
-# for now lets just brute force search 
+
+
 
 def brute_force_equiv_test(
     model: PatchableModel,
