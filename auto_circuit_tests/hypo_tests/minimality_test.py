@@ -224,67 +224,67 @@ def minimality_test_edge(
     diffs_inflated = torch.cat(diffs_inflated)
     return MinResult(bool(p_value < alpha), p_value, num_edge_score_gt_ref, diffs, diffs_inflated)
 
-from auto_circuit_tests.hypo_tests.equiv_test import equiv_test, EquivResult
+# from auto_circuit_tests.hypo_tests.equiv_test import equiv_test, EquivResult
 
-class MinEquivResult(NamedTuple):
-    minimal: bool 
-    num_ablated_C_gt_M: int 
-    n: int 
-    circ_scores: torch.Tensor
-    model_scores: torch.Tensor
+# class MinEquivResult(NamedTuple):
+#     minimal: bool 
+#     num_ablated_C_gt_M: int 
+#     n: int 
+#     circ_scores: torch.Tensor
+#     model_scores: torch.Tensor
 
-# our statement should that for every edges in the circuit, ablating the edge causes non-equivlanece with 1-alpha confidence (seems reasonable)?
-def minimality_equiv_test(
-    model: PatchableModel,
-    dataloader: PromptDataLoader,
-    prune_scores: torch.Tensor | PruneScores,
-    edges: list[Edge], 
+# # our statement should that for every edges in the circuit, ablating the edge causes non-equivlanece with 1-alpha confidence (seems reasonable)?
+# def minimality_equiv_test(
+#     model: PatchableModel,
+#     dataloader: PromptDataLoader,
+#     prune_scores: torch.Tensor | PruneScores,
+#     edges: list[Edge], 
 
-    ablation_type: AblationType, 
-    grad_function: GradFunc,
-    answer_function: AnswerFunc,
-    threshold: Optional[float] = None,
-    edge_count: Optional[int] = None,
-    full_model_out: Dict[BatchKey, torch.Tensor]=None,
-    use_abs: bool = True,
-    alpha: float = 0.05,
-    epsilon: float = 0.1,
-    all_edges: bool = False
-): 
-    assert (threshold is not None) ^ (edge_count is not None)
-    if threshold is None:
-        threshold = prune_scores_threshold(prune_scores, edge_count, use_abs=use_abs)
-    # TODO: finish
-    full_results = {}
-    p_value = 1.0
-    for edge in edges: # TODO: sort
-        prune_scores_ablated = {k: v.clone() for k, v in prune_scores.items()}
-        prune_scores_ablated[edge.dest.module_name][edge.patch_idx] = 0.0
-        equiv_result: EquivResult = next(iter(equiv_test(
-            model=model,
-            dataloader=dataloader,
-            prune_scores=prune_scores_ablated,
-            grad_function=grad_function,
-            answer_function=answer_function,
-            ablation_type=ablation_type,
-            thresholds=[threshold],
-            model_out=full_model_out,
-            use_abs=use_abs,
-            alpha=alpha,
-            epsilon=epsilon,
-            bayesian=True
-        ).values()))
-        p_value *= 1-equiv_result.p_value # joint probability of all edges causing non-equivlanece
-        min_equiv_result = MinEquivResult(
-            num_ablated_C_gt_M=equiv_result.num_ablated_C_gt_M,
-            n=equiv_result.n,
-            circ_scores=equiv_result.circ_scores,
-            model_scores=equiv_result.model_scores
-        )
-        full_results[edge_key(edge)] = min_equiv_result
-        if p_value > alpha and not all_edges:
-            break
-    return full_results
+#     ablation_type: AblationType, 
+#     grad_function: GradFunc,
+#     answer_function: AnswerFunc,
+#     threshold: Optional[float] = None,
+#     edge_count: Optional[int] = None,
+#     full_model_out: Dict[BatchKey, torch.Tensor]=None,
+#     use_abs: bool = True,
+#     alpha: float = 0.05,
+#     epsilon: float = 0.1,
+#     all_edges: bool = False
+# ): 
+#     assert (threshold is not None) ^ (edge_count is not None)
+#     if threshold is None:
+#         threshold = prune_scores_threshold(prune_scores, edge_count, use_abs=use_abs)
+#     # TODO: finish
+#     full_results = {}
+#     p_value = 1.0
+#     for edge in edges: # TODO: sort
+#         prune_scores_ablated = {k: v.clone() for k, v in prune_scores.items()}
+#         prune_scores_ablated[edge.dest.module_name][edge.patch_idx] = 0.0
+#         equiv_result: EquivResult = next(iter(equiv_test(
+#             model=model,
+#             dataloader=dataloader,
+#             prune_scores=prune_scores_ablated,
+#             grad_function=grad_function,
+#             answer_function=answer_function,
+#             ablation_type=ablation_type,
+#             thresholds=[threshold],
+#             model_out=full_model_out,
+#             use_abs=use_abs,
+#             alpha=alpha,
+#             epsilon=epsilon,
+#             bayesian=True
+#         ).values()))
+#         p_value *= 1-equiv_result.p_value # joint probability of all edges causing non-equivlanece
+#         min_equiv_result = MinEquivResult(
+#             num_ablated_C_gt_M=equiv_result.num_ablated_C_gt_M,
+#             n=equiv_result.n,
+#             circ_scores=equiv_result.circ_scores,
+#             model_scores=equiv_result.model_scores
+#         )
+#         full_results[edge_key(edge)] = min_equiv_result
+#         if p_value > alpha and not all_edges:
+#             break
+#     return full_results
 
 
 def plot_p_values(min_results: dict[Edge, MinResult], edge_scores: dict[Edge, torch.Tensor], alpha: float = 0.05):
