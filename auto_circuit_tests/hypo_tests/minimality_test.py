@@ -96,7 +96,7 @@ def minimality_test( #TODO: seperate infalted circuit seperate from dataset, get
         }
         sampled_paths[batch.key] = random.choices(filtered_paths, k=batch.clean.size(0))
     for batch_key, paths in sampled_paths.items():
-        for batch_idx, path in enumerate(paths):
+        for batch_idx, path in enumerate(paths): #TODO: what is this doing ah I see, 
             for edge in path:
                 set_score(edge, prune_scores_inflated[batch_key], threshold+1, batch_idx=batch_idx, tokens=tokens)
     
