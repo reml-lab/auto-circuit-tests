@@ -79,6 +79,17 @@ class SeqNode:
     in_edges: list["SeqEdge"] = field(default_factory=list)
     out_edges: list["SeqEdge"] = field(default_factory=list)
 
+    def __str__(self): 
+        return f"{self.name}{'_' + self.seq_idx if self.seq_idx is not None else ''}"
+    
+    def __repr__(self):
+        return str(self)
+    
+    def __hash__(self):
+        return hash((self.name, self.seq_idx))
+
+
+
     @classmethod
     def from_node(cls, node: Node, seq_idx: int, path_count: int=0, reachable: bool=False) -> "SeqNode":
         return cls(
@@ -91,6 +102,9 @@ class SeqNode:
             path_count=path_count,
             reachable=reachable,
         )
+
+    def __str__(self): 
+        return f"{self.name}{'_' + self.seq_idx if self.seq_idx is not None else ''}"
 
 def get_seq_node_key(node: SeqNode) -> SeqNodeKey:
     return (node.layer, node.head_idx, node.seq_idx, node_name_to_type(node.name))
@@ -106,6 +120,15 @@ class SeqEdge:
     head: SeqNode
     tail: SeqNode
     edge: Optional[Edge] = None
+
+    def __str__(self):
+        return f"{self.head} -> {self.tail}"
+    
+    def __repr__(self):
+        return str(self)
+    
+    def __hash__(self):
+        return hash((self.head, self.tail))
 
 
 class SeqGraph():
@@ -383,68 +406,80 @@ def sample_paths(
     ]
 
 
-# def visualize_graph(graph:Graph, sort_by_head: bool=True):
-#     # Create a new directed graph
-#     G = nx.DiGraph()
+# TODO: plot graph 
+def visualize_graph(graph:SeqGraph, sort_by_head: bool=True, max_layer: int=None,
+                    edge_colors: Optional[dict[Edge, str]]=None, default_color: str='gray'):
+    # Create a new directed graph
+    G = nx.DiGraph()
 
-#     SeqNode = namedtuple('SeqNode', ['destnode', 'seq_idx'])
+    # convert edge color dict to (src.name, dest.name, seq_idx) -> color
+    if edge_colors:
+        edge_colors = {(edge.src.name, edge.dest.name, edge.seq_idx): color for edge, color in edge_colors.items()}
 
-#     # Add nodes and edges to the graph
-#     for source, targets in graph.items():
-#         source_seq = SeqNode(destnode=source.dest, seq_idx=source.seq_idx)
-#         G.add_node(str(source.dest), layer=source.dest.layer, seq_idx=source.seq_idx, head_idx=source.dest.head_idx)
-#         for target in targets:
-#             G.add_edge(str(source), str(target))
+    # Add nodes and edges to the graph
+    for seq_node in graph.seq_nodes:
+        if max_layer is not None and seq_node.layer > max_layer:
+            continue
+        G.add_node(str(seq_node), layer=seq_node.layer, seq_idx=seq_node.seq_idx, head_idx=seq_node.head_idx, is_src=seq_node.is_src)
+        for edge in seq_node.out_edges:
+            if max_layer is not None and edge.tail.layer > max_layer:
+                continue
+            color = default_color
+            if edge_colors:
+                color = edge_colors.get((seq_node.name, edge.tail.name, seq_node.seq_idx), default_color)
+            G.add_edge(str(seq_node), str(edge.tail), color=color)
 
-#     # Set up the plot
-#     plt.figure(figsize=(24, 16))
+    # Set up the plot
+    plt.figure(figsize=(24, 16))
     
-#     # Create a custom layout for the graph
-#     pos = {}
-#     seq_idx_set = sorted(set(data['seq_idx'] for _, data in G.nodes(data=True)))
-#     layer_set = sorted(set(data['layer'] for _, data in G.nodes(data=True)))  # No longer reversed
+    # Create a custom layout for the graph
+    pos = {}
+    seq_idx_set = sorted(set(data['seq_idx'] for _, data in G.nodes(data=True)))
+    layer_set = sorted(set(data['layer'] for _, data in G.nodes(data=True)))  # No longer reversed
+    head_idx_set = sorted(set(data['head_idx'] for _, data in G.nodes(data=True)), key=lambda x: x if x is not None else -1)
     
-#     # Group nodes by layer and seq_idx
-#     grouped_nodes = defaultdict(list)
-#     for node, data in G.nodes(data=True):
-#         grouped_nodes[(data['layer'], data['seq_idx'])].append((node, data))
+    # Group nodes by layer and seq_idx
+    grouped_nodes = defaultdict(list)
+    for node, data in G.nodes(data=True):
+        grouped_nodes[(data['layer'], data['seq_idx'], data['head_idx'], data['is_src'])].append((node, data))
 
-#     # Calculate layout
-#     column_width = 1.5  # Adjust this value to increase horizontal spacing
-#     row_height = 5  # Adjust this value to increase vertical spacing
-#     max_nodes_in_group = max(len(nodes) for nodes in grouped_nodes.values())
+    # Calculate layout
+    column_width = 1.5  # Adjust this value to increase horizontal spacing
+    row_height = 5  # Adjust this value to increase vertical spacing
+    max_nodes_in_group = max(len(nodes) for nodes in grouped_nodes.values())
     
-#     for (layer, seq_idx), nodes in grouped_nodes.items():
-#         x = seq_idx_set.index(seq_idx) * column_width
-#         y = (len(layer_set) - 1 - layer_set.index(layer)) * row_height  # Invert y-axis
+    for (layer, seq_idx, head_idx, is_src), nodes in grouped_nodes.items():
+        x = seq_idx_set.index(seq_idx) * len(head_idx_set) + head_idx_set.index(head_idx) * column_width
+        y = (len(layer_set)*2 - 1 - (layer_set.index(layer) * 2 + int(is_src))) * row_height  # Invert y-axis
         
-#         # Sort nodes by head_idx (if available) or by node name
-#         if sort_by_head:
-#             sorted_nodes = sorted(nodes, key=lambda n: (n[1]['head_idx'] if n[1]['head_idx'] is not None else float('inf'), n[0]))
-#         else: # sort by Q, K, V, MLP
-#             sorted_nodes = sorted(nodes, key=lambda n: (n[0].split('_')[0].split('.')[-1]))
+        # Sort nodes by head_idx (if available) or by node name
+        if sort_by_head:
+            sorted_nodes = sorted(nodes, key=lambda n: (n[1]['head_idx'] if n[1]['head_idx'] is not None else float('inf'), n[0]))
+        else: # sort by Q, K, V, MLP
+            sorted_nodes = sorted(nodes, key=lambda n: (n[0].split('_')[0].split('.')[-1]))
         
-#         # Position nodes in a vertical line within their layer and seq_idx group
-#         for i, (node, data) in enumerate(sorted_nodes):
-#             node_y = y - i * (row_height / (max_nodes_in_group + 1))  # Distribute nodes evenly within the row
-#             pos[node] = (x, node_y)
+        # Position nodes in a vertical line within their layer and seq_idx group
+        for i, (node, data) in enumerate(sorted_nodes):
+            node_x = x + i * (column_width / (max_nodes_in_group + 1))  # Distribute nodes evenly within the row
+            pos[node] = (node_x, y)
 
-#     # Draw the nodes
-#     node_size = 100  # Adjust as needed
-#     nx.draw_networkx_nodes(G, pos, node_size=node_size, node_color='lightblue')
+    # Draw the nodes
+    node_size = 100  # Adjust as needed
+    nx.draw_networkx_nodes(G, pos, node_size=node_size, node_color='lightblue')
 
-#     # Draw the edges
-#     nx.draw_networkx_edges(G, pos, edge_color='gray', arrows=True, width=0.5, arrowsize=10)
+    # Draw the edges
+    edge_colors = [G[u][v]['color'] for u, v in G.edges()]
+    nx.draw_networkx_edges(G, pos, edge_color=edge_colors, arrows=True, width=0.5, arrowsize=10)
 
-#     # Add labels to the nodes
-#     labels = {node: f"{node.split('_')[0]}" for node in G.nodes()}
-#     nx.draw_networkx_labels(G, pos, labels, font_size=6)
+    # Add labels to the nodes
+    labels = {node: f"{node.split('_')[0]}" for node in G.nodes()}
+    nx.draw_networkx_labels(G, pos, labels, font_size=6)
 
-#     # Add path counts as labels on the nodes (uncomment if needed)
-#     # path_count_labels = {str(node): f"Paths: {count}" for node, count in path_counts.items()}
-#     # nx.draw_networkx_labels(G, pos, path_count_labels, font_size=4, font_color='red')
+    # Add path counts as labels on the nodes (uncomment if needed)
+    # path_count_labels = {str(node): f"Paths: {count}" for node, count in path_counts.items()}
+    # nx.draw_networkx_labels(G, pos, path_count_labels, font_size=4, font_color='red')
 
-#     plt.title("Graph Visualization with Corrected Layer Spacing")
-#     plt.axis('off')
-#     plt.tight_layout()
-#     plt.show()
+    plt.title("Graph Visualization with Corrected Layer Spacing")
+    plt.axis('off')
+    plt.tight_layout()
+    plt.show()

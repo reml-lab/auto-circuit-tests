@@ -1,4 +1,5 @@
 
+from copy import deepcopy
 from typing import Dict, List, Tuple, Optional, Union
 import math
 from collections import defaultdict
@@ -40,9 +41,60 @@ def run_fully_ablated_model(
         test_edge_counts=[model.n_edges],
         patch_type=PatchType.EDGE_PATCH,
         ablation_type=ablation_type,
-        reverse_clean_corrupt=True if ablation_type == AblationType.RESAMPLE else False, 
+        reverse_clean_corrupt=True # (all) edges are ablated with corrupt
     ).values()))
     return ablated_model_outs
+
+
+def run_circuit_with_edge_ablated(
+    model: PatchableModel, 
+    dataloader: PromptDataLoader,
+    prune_scores: PruneScores, 
+    edge: Edge, 
+    ablation_type: AblationType,
+    threshold: float, 
+    to_cpu: bool = True
+) -> BatchOutputs: 
+    # ablate edge  
+    mask = deepcopy(prune_scores)
+    mask[edge.dest.module_name][edge.patch_idx] = 0
+    # run circuit
+    circ_ablated_out = next(iter(run_circuits(
+        model=model, 
+        dataloader=dataloader,
+        prune_scores=mask,
+        thresholds = [threshold],
+        patch_type=PatchType.TREE_PATCH, 
+        ablation_type=ablation_type,
+        reverse_clean_corrupt=False, 
+    ).values()))
+    if to_cpu:
+        circ_ablated_out = {k: v.detach().cpu() for k, v in circ_ablated_out.items()}
+    return circ_ablated_out
+
+
+def run_circuit_with_edges_ablated(
+    model: PatchableModel,
+    dataloader: PromptDataLoader,
+    prune_scores: PruneScores,
+    edges: list[Edge],
+    ablation_type: AblationType,
+    threshold: float,
+    to_cpu: bool = True
+) -> Dict[Edge, BatchOutputs]:
+    edge_outs = {}
+    for edge in tqdm(edges):
+        edge_outs[edge] = run_circuit_with_edge_ablated(
+            model=model,
+            dataloader=dataloader,
+            prune_scores=prune_scores,
+            edge=edge,
+            ablation_type=ablation_type,
+            threshold=threshold,
+            to_cpu=to_cpu
+        )
+    return edge_outs
+
 
 
 def flat_prune_scores(prune_scores: PruneScores, per_inst: bool=False) -> t.Tensor:

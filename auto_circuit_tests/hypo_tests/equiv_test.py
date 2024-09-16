@@ -53,7 +53,7 @@ def compute_num_C_gt_M(
         model_scores.append(model_score)
     return num_ablated_C_gt_M, n, torch.cat(circ_scores), torch.cat(model_scores)
 
-def run_non_equiv_test(
+def equiv_test(
     k: int, 
     n: int, 
     alpha: float = 0.05, 
@@ -80,26 +80,26 @@ def run_non_equiv_test(
 
 
 
-def bernoulli_range_test(
-    K,
-    N,
-    eps=0.1,
-    a=[1,1],
-    alpha=0.5
-):
-    #Inputs:
-    #  K: number of successes
-    #  N: number of trials
-    #  eps: faithfulness threshold
-    #  a: beta prior coefficients on pi
-    #  alpha: rejection threshold  
-    #Outputs: 
-    #  p(0.5-eps <= pi <= 0.5+eps | N, K, a)
-    #  p(0.5-eps <= pi <= 0.5+eps | N, K, a)<1-alpha
+# def bernoulli_range_test(
+#     K,
+#     N,
+#     eps=0.1,
+#     a=[1,1],
+#     alpha=0.5
+# ):
+#     #Inputs:
+#     #  K: number of successes
+#     #  N: number of trials
+#     #  eps: faithfulness threshold
+#     #  a: beta prior coefficients on pi
+#     #  alpha: rejection threshold  
+#     #Outputs: 
+#     #  p(0.5-eps <= pi <= 0.5+eps | N, K, a)
+#     #  p(0.5-eps <= pi <= 0.5+eps | N, K, a)<1-alpha
 
-    p_piK     = beta(N-K+a[0],K+a[1])
-    p_between = p_piK.cdf(0.5+eps) - p_piK.cdf(0.5-eps)
-    return(p_between<1-alpha, p_between)
+#     p_piK     = beta(N-K+a[0],K+a[1])
+#     p_between = p_piK.cdf(0.5+eps) - p_piK.cdf(0.5-eps)
+#     return(p_between<1-alpha, p_between)
 
 class EquivResult(NamedTuple):
     num_ablated_C_gt_M: int
@@ -153,7 +153,7 @@ def equiv_tests(
         num_ablated_C_gt_M, n, circ_scores, model_scores = compute_num_C_gt_M(
             circuit_out, model_out, dataloader, grad_function, answer_function
         )
-        reject_nul, left_tail, right_tail = run_non_equiv_test(
+        reject_nul, left_tail, right_tail = equiv_test(
             num_ablated_C_gt_M, n, alpha, epsilon, null_equiv=null_equiv
         )
         test_results[edge_count] = EquivResult(
@@ -171,173 +171,173 @@ def equiv_tests(
 
 
 
-def brute_force_equiv_test(
-    model: PatchableModel,
-    dataloader: PromptDataLoader,
-    prune_scores: PruneScores,
-    grad_function: GradFunc,
-    answer_function: AnswerFunc,
-    ablation_type: AblationType, 
-    use_abs: bool = True,
-    side: Side = Side.NONE,
-    alpha: float = 0.05,
-    epsilon: float = 0.1,
-    bayesian: bool = False,
-    model_out: Optional[Dict[BatchKey, torch.Tensor]] = None,
-    start_edge_count: int = 1,
-    reverse: bool = False,
-): 
-    full_results = {}
-    if not reverse:
-        stop_count = model.n_edges + 1 
-        incr = 1
-    else:
-        stop_count = 0
-        incr = -1
-    edge_count_iter = tqdm(range(start_edge_count, stop_count, incr), desc="Equiv Test")
-    for edge_count in edge_count_iter:
-        equiv_result_dict = equiv_test(
-            model=model, 
-            dataloader=dataloader,
-            prune_scores=prune_scores,
-            grad_function=grad_function,
-            answer_function=answer_function,
-            ablation_type=ablation_type,
-            edge_counts=[edge_count],
-            use_abs=use_abs,
-            side=side,
-            alpha=alpha,
-            epsilon=epsilon,
-            bayesian=bayesian,
-            model_out=model_out,
-        )
-        assert len(equiv_result_dict) == 1
-        full_results.update(equiv_result_dict)
-        edge_count = next(iter(equiv_result_dict.keys()))
-        # add p value to description
-        equiv_result = equiv_result_dict[edge_count]
-        edge_count_iter.set_description(
-            f"Equiv Test: {edge_count} p={equiv_result.p_value:.3f}, k={equiv_result.num_ablated_C_gt_M}, n={equiv_result.n}")
-        if not equiv_result.not_equiv:
-            break
-    return {k: full_results[k] for k in sorted(full_results.keys())}, edge_count
+# def brute_force_equiv_test(
+#     model: PatchableModel,
+#     dataloader: PromptDataLoader,
+#     prune_scores: PruneScores,
+#     grad_function: GradFunc,
+#     answer_function: AnswerFunc,
+#     ablation_type: AblationType, 
+#     use_abs: bool = True,
+#     side: Side = Side.NONE,
+#     alpha: float = 0.05,
+#     epsilon: float = 0.1,
+#     bayesian: bool = False,
+#     model_out: Optional[Dict[BatchKey, torch.Tensor]] = None,
+#     start_edge_count: int = 1,
+#     reverse: bool = False,
+# ): 
+#     full_results = {}
+#     if not reverse:
+#         stop_count = model.n_edges + 1 
+#         incr = 1
+#     else:
+#         stop_count = 0
+#         incr = -1
+#     edge_count_iter = tqdm(range(start_edge_count, stop_count, incr), desc="Equiv Test")
+#     for edge_count in edge_count_iter:
+#         equiv_result_dict = equiv_test(
+#             model=model, 
+#             dataloader=dataloader,
+#             prune_scores=prune_scores,
+#             grad_function=grad_function,
+#             answer_function=answer_function,
+#             ablation_type=ablation_type,
+#             edge_counts=[edge_count],
+#             use_abs=use_abs,
+#             side=side,
+#             alpha=alpha,
+#             epsilon=epsilon,
+#             bayesian=bayesian,
+#             model_out=model_out,
+#         )
+#         assert len(equiv_result_dict) == 1
+#         full_results.update(equiv_result_dict)
+#         edge_count = next(iter(equiv_result_dict.keys()))
+#         # add p value to description
+#         equiv_result = equiv_result_dict[edge_count]
+#         edge_count_iter.set_description(
+#             f"Equiv Test: {edge_count} p={equiv_result.p_value:.3f}, k={equiv_result.num_ablated_C_gt_M}, n={equiv_result.n}")
+#         if not equiv_result.not_equiv:
+#             break
+#     return {k: full_results[k] for k in sorted(full_results.keys())}, edge_count
 
 
-def sweep_search_smallest_equiv(
-    model: PatchableModel,
-    dataloader: PromptDataLoader,
-    prune_scores: PruneScores,
-    grad_function: GradFunc,
-    answer_function: AnswerFunc,
-    ablation_type: AblationType, 
-    use_abs: bool = True,
-    side: Side = Side.NONE,
-    alpha: float = 0.05,
-    epsilon: float = 0.1,
-    bayesian: bool = False,
-    model_out: Optional[Dict[BatchKey, torch.Tensor]] = None,
-) -> tuple[dict[int, EquivResult], int]:
-    """Returns equiv test results and minimal equivalent number of edges."""
-    full_results = {}
-    width = 10 ** math.floor(math.log10(model.n_edges)-1)
-    interval_min = 0 
-    interval_max = model.n_edges #FIXME: if not use_abs, should only look at positive values
-    if model_out is None:
-        model_out = {batch.key: model(batch.clean)[model.out_slice] for batch in dataloader}
-    while width > 0:
-        print(f"interval: {interval_min} - {interval_max}")
-        print("width", width)
-        edge_counts = [i for i in range(interval_min, interval_max, width)]
-        edge_counts.append(interval_max)
-        test_results = equiv_test(
-            model=model, 
-            dataloader=dataloader,
-            prune_scores=prune_scores,
-            grad_function=grad_function,
-            answer_function=answer_function,
-            ablation_type=ablation_type,
-            edge_counts=edge_counts,
-            model_out=model_out,
-            full_model=None,
-            use_abs=use_abs,
-            side=side,
-            alpha=alpha,
-            epsilon=epsilon,
-            bayesian=bayesian,
-        )
-        full_results.update(test_results)
-        # find lowest interval where equivalence holds
-        equivs = [k for k, v in test_results.items() if not v.not_equiv]
-        min_equiv = min(equivs) if equivs else model.n_edges
-        # round up to width or n_edges
-        if min_equiv % width != 0:
-            min_equiv = min(min_equiv + width - min_equiv % width, model.n_edges)
-        # cases
-        new_width = width // 10
-        if min_equiv == model.n_edges:
-            interval_max = model.n_edges
-            if len(test_results) == 1:
-                interval_min = model.n_edges
-                new_width = 0 # exit loop
-            else:
-                interval_min = edge_counts[-2] # get last edge count tested before full
-        else:
-            interval_max = min_equiv
-            interval_min = min_equiv - width
-        width = new_width
-    del model_out
-    full_results = {k: full_results[k] for k in sorted(full_results.keys())}
-    return full_results, interval_max
+# def sweep_search_smallest_equiv(
+#     model: PatchableModel,
+#     dataloader: PromptDataLoader,
+#     prune_scores: PruneScores,
+#     grad_function: GradFunc,
+#     answer_function: AnswerFunc,
+#     ablation_type: AblationType, 
+#     use_abs: bool = True,
+#     side: Side = Side.NONE,
+#     alpha: float = 0.05,
+#     epsilon: float = 0.1,
+#     bayesian: bool = False,
+#     model_out: Optional[Dict[BatchKey, torch.Tensor]] = None,
+# ) -> tuple[dict[int, EquivResult], int]:
+#     """Returns equiv test results and minimal equivalent number of edges."""
+#     full_results = {}
+#     width = 10 ** math.floor(math.log10(model.n_edges)-1)
+#     interval_min = 0 
+#     interval_max = model.n_edges #FIXME: if not use_abs, should only look at positive values
+#     if model_out is None:
+#         model_out = {batch.key: model(batch.clean)[model.out_slice] for batch in dataloader}
+#     while width > 0:
+#         print(f"interval: {interval_min} - {interval_max}")
+#         print("width", width)
+#         edge_counts = [i for i in range(interval_min, interval_max, width)]
+#         edge_counts.append(interval_max)
+#         test_results = equiv_test(
+#             model=model, 
+#             dataloader=dataloader,
+#             prune_scores=prune_scores,
+#             grad_function=grad_function,
+#             answer_function=answer_function,
+#             ablation_type=ablation_type,
+#             edge_counts=edge_counts,
+#             model_out=model_out,
+#             full_model=None,
+#             use_abs=use_abs,
+#             side=side,
+#             alpha=alpha,
+#             epsilon=epsilon,
+#             bayesian=bayesian,
+#         )
+#         full_results.update(test_results)
+#         # find lowest interval where equivalence holds
+#         equivs = [k for k, v in test_results.items() if not v.not_equiv]
+#         min_equiv = min(equivs) if equivs else model.n_edges
+#         # round up to width or n_edges
+#         if min_equiv % width != 0:
+#             min_equiv = min(min_equiv + width - min_equiv % width, model.n_edges)
+#         # cases
+#         new_width = width // 10
+#         if min_equiv == model.n_edges:
+#             interval_max = model.n_edges
+#             if len(test_results) == 1:
+#                 interval_min = model.n_edges
+#                 new_width = 0 # exit loop
+#             else:
+#                 interval_min = edge_counts[-2] # get last edge count tested before full
+#         else:
+#             interval_max = min_equiv
+#             interval_min = min_equiv - width
+#         width = new_width
+#     del model_out
+#     full_results = {k: full_results[k] for k in sorted(full_results.keys())}
+#     return full_results, interval_max
     
 
 
-def bin_search_smallest_equiv(
-    model: PatchableModel,
-    dataloader: PromptDataLoader,
-    prune_scores: PruneScores,
-    grad_function: GradFunc,
-    answer_function: AnswerFunc,
-    ablation_type: AblationType, 
-    use_abs: bool = True,
-    side: Side = Side.NONE,
-    alpha: float = 0.05,
-    epsilon: float = 0.1,
-    bayesian: bool = False,
-):
-    edge_count_interval = [i for i in range(model.n_edges + 1)]
-    min_equiv = edge_count_interval[-1]
-    min_equiv_p_val = 0.0
-    model_out = {batch.key: model(batch.clean)[model.out_slice] for batch in dataloader}
-    while len(edge_count_interval) > 0:
-        midpoint = len(edge_count_interval) // 2
-        edge_count = edge_count_interval[midpoint]
+# def bin_search_smallest_equiv(
+#     model: PatchableModel,
+#     dataloader: PromptDataLoader,
+#     prune_scores: PruneScores,
+#     grad_function: GradFunc,
+#     answer_function: AnswerFunc,
+#     ablation_type: AblationType, 
+#     use_abs: bool = True,
+#     side: Side = Side.NONE,
+#     alpha: float = 0.05,
+#     epsilon: float = 0.1,
+#     bayesian: bool = False,
+# ):
+#     edge_count_interval = [i for i in range(model.n_edges + 1)]
+#     min_equiv = edge_count_interval[-1]
+#     min_equiv_p_val = 0.0
+#     model_out = {batch.key: model(batch.clean)[model.out_slice] for batch in dataloader}
+#     while len(edge_count_interval) > 0:
+#         midpoint = len(edge_count_interval) // 2
+#         edge_count = edge_count_interval[midpoint]
 
-        num_ablated_C_gt_M, n, not_equiv, p_value = next(iter(equiv_test(
-            model=model, 
-            dataloader=dataloader,
-            prune_scores=prune_scores,
-            grad_function=grad_function,
-            answer_function=answer_function,
-            ablation_type=ablation_type,
-            edge_counts=[edge_count],
-            model_out=model_out,
-            use_abs=use_abs,
-            side=side,
-            alpha=alpha,
-            epsilon=epsilon,
-            bayesian=bayesian,
-        ).values()))
+#         num_ablated_C_gt_M, n, not_equiv, p_value = next(iter(equiv_test(
+#             model=model, 
+#             dataloader=dataloader,
+#             prune_scores=prune_scores,
+#             grad_function=grad_function,
+#             answer_function=answer_function,
+#             ablation_type=ablation_type,
+#             edge_counts=[edge_count],
+#             model_out=model_out,
+#             use_abs=use_abs,
+#             side=side,
+#             alpha=alpha,
+#             epsilon=epsilon,
+#             bayesian=bayesian,
+#         ).values()))
 
-        if not_equiv:
-            print(f"not equiv at {edge_count}, p value : {p_value}, increase edge count")
-            edge_count_interval = edge_count_interval[midpoint+1:] # more edges 
-        else:
-            min_equiv = edge_count
-            min_equiv_p_val = p_value
-            print(f"equiv at {edge_count},  p value: {p_value}, decrease edge count")
-            edge_count_interval = edge_count_interval[:midpoint] # less edges
-    del model_out
-    return min_equiv, min_equiv_p_val
+#         if not_equiv:
+#             print(f"not equiv at {edge_count}, p value : {p_value}, increase edge count")
+#             edge_count_interval = edge_count_interval[midpoint+1:] # more edges 
+#         else:
+#             min_equiv = edge_count
+#             min_equiv_p_val = p_value
+#             print(f"equiv at {edge_count},  p value: {p_value}, decrease edge count")
+#             edge_count_interval = edge_count_interval[:midpoint] # less edges
+#     del model_out
+#     return min_equiv, min_equiv_p_val
 
 
 

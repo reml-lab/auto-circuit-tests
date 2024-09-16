@@ -4,6 +4,7 @@ import torch
 import numpy as np
 from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.preprocessing import KernelCenterer
+from scipy.spatial.distance import cdist
 
 from auto_circuit.data import PromptDataLoader, PromptPairBatch
 from auto_circuit.prune import run_circuits
@@ -25,75 +26,30 @@ def hsic(X: np.ndarray, Y: np.ndarray, gamma: float) -> float:
     K_Y_c = centerer.fit_transform(K_Y)
     return np.trace(K_X_c @ K_Y_c)
 
-class IndepResults(NamedTuple):
-    not_indep: bool 
-    p_value: float 
 
-
-def independence_test(
-    model: PatchableModel,
-    dataloader: PromptDataLoader,
-    prune_scores: PruneScores,
-    ablation_type: AblationType,
-    grad_function: GradFunc,
-    answer_function: AnswerFunc,
-    threshold: float,
-    use_abs: bool,
-    alpha: float = 0.05,
-    B: int = 1000,
-) -> IndepResults:
-    # compute model out 
-    m_out: BatchOutputs = {}
-    for batch in dataloader:
-        m_out[batch.key] = model(batch.clean)[model.out_slice]
-    # construct independence scores, applying abs value if use_abs is False (to ablate negative edges and only take complement on positives)
-    independence_scores = {k: v.clone() for k, v in prune_scores.items()}
-    if not use_abs:
-        for k in independence_scores:
-            independence_scores[k][independence_scores[k] < 0] = threshold + 1
-    # next, we run the complement of the circuit 
-    c_comp_out = dict(next(iter(run_circuits(
-        model,
-        dataloader,
-        prune_scores=independence_scores,
-        thresholds=[threshold], # not sure that's really right here
-        patch_type=PatchType.EDGE_PATCH, # Edge patch is patching the edges in the circuit (not sure why?)
-        ablation_type=ablation_type,
-        reverse_clean_corrupt=False, 
-        use_abs=True,
-    ).values())))
-
-    # then, we compute the scores 
-    score_func = get_score_func(grad_function, answer_function)
-    m_scores = []
-    c_comp_scores = []
-    for batch in dataloader:
-        m_scores.append(score_func(m_out[batch.key], batch)) # supposed to be looking at all output #TODO
-        c_comp_scores.append(score_func(c_comp_out[batch.key], batch))
-    m_scores = torch.cat(m_scores)[:, None].detach().cpu()
-    c_comp_scores = torch.cat(c_comp_scores)[:, None].detach().cpu()
-    sigma = torch.cdist(m_scores, c_comp_scores, p=2).median().item()
-    m_scores = m_scores.numpy()
-    c_comp_scores = c_comp_scores.numpy()
-
-    # compute t_obs
-    t_obs = hsic(m_scores, c_comp_scores, gamma=sigma)
-
-    # then we compute the trace of the inner product of the cross product and itself (alternatively, the trace of the inner product of the covariance matrices)
-    # we store that value, then for b iterations 
+def indep_test(X: np.ndarray, Y: np.ndarray, B: int, alpha: float) -> Tuple[bool, int, float]:
+    rho = np.median(cdist(X, Y, metric='euclidean')) #torch.cdist(model_scores, comp_circuit_scores, p=2).median().item()
+    gamma = 1/rho
+    t_obs = hsic(X, Y, gamma=gamma)
     t = 0
     for b in range(B):
-        # permutate the model scores 
-        perm_m_scores = np.random.permutation(m_scores)
+        # permutate X
+        perm_X = np.random.permutation(X)
         # compute the new HSIC value 
-        t_i = hsic(perm_m_scores, c_comp_scores, gamma=sigma)
-        # increment t with 1 if new value greater 
+        t_i = hsic(perm_X, Y, gamma=gamma)
+        # increment t with 1 if new value greater
         t += t_obs < t_i
-    # p value = t / B (higher p value -> more instances greater than t_obs -> more likely to be independent)
     p_value = t / B
-    return IndepResults(not_indep=bool(p_value < alpha), p_value=p_value)
+    return p_value < alpha, t, p_value
 
 
+class IndepResults(NamedTuple):
+    num_t_gt_t_obs: int
+    B: int
+    p_value: float
+    reject_null: bool
+    complement_model_scores: torch.Tensor
+    model_scores: torch.Tensor
 
 
 def independence_tests(
@@ -107,10 +63,9 @@ def independence_tests(
     thresholds: Optional[list[float]] = None,
     model_out: Optional[BatchOutputs] = None,
     complement_circuit_outs: Optional[CircuitOutputs] = None,
-    null_indep: bool = True, 
     alpha: float = 0.05,
     B: int = 1000,
-):
+) -> Dict[int, IndepResults]:
 
     # compute complement outs 
     if complement_circuit_outs is None:
@@ -122,61 +77,37 @@ def independence_tests(
         thresholds=thresholds,
         patch_type=PatchType.EDGE_PATCH, 
         ablation_type=ablation_type,
-        reverse_clean_corrupt=ablation_type == AblationType.RESAMPLE, 
+        reverse_clean_corrupt=True, 
     )
-    # TODO:
-
-
     # compute model out 
-    m_out: BatchOutputs = {}
-    for batch in dataloader:
-        m_out[batch.key] = model(batch.clean)[model.out_slice]
-    # construct independence scores, applying abs value if use_abs is False (to ablate negative edges and only take complement on positives)
-    independence_scores = {k: v.clone() for k, v in prune_scores.items()}
-    if not use_abs:
-        for k in independence_scores:
-            independence_scores[k][independence_scores[k] < 0] = threshold + 1
-    # next, we run the complement of the circuit 
-    c_comp_out = dict(next(iter(run_circuits(
-        model,
-        dataloader,
-        prune_scores=independence_scores,
-        thresholds=[threshold], # not sure that's really right here
-        patch_type=PatchType.EDGE_PATCH, # Edge patch is patching the edges in the circuit (not sure why?)
-        ablation_type=ablation_type,
-        reverse_clean_corrupt=False, 
-        use_abs=True,
-    ).values())))
+    if model_out is None:
+        model_out: BatchOutputs = {}
+        for batch in dataloader:
+            model_out[batch.key] = model(batch.clean)[model.out_slice]
 
-    # then, we compute the scores 
+    # compute scores
     score_func = get_score_func(grad_function, answer_function)
-    m_scores = []
-    c_comp_scores = []
-    for batch in dataloader:
-        m_scores.append(score_func(m_out[batch.key], batch)) # supposed to be looking at all output #TODO
-        c_comp_scores.append(score_func(c_comp_out[batch.key], batch))
-    m_scores = torch.cat(m_scores)[:, None].detach().cpu()
-    c_comp_scores = torch.cat(c_comp_scores)[:, None].detach().cpu()
-    sigma = torch.cdist(m_scores, c_comp_scores, p=2).median().item()
-    m_scores = m_scores.numpy()
-    c_comp_scores = c_comp_scores.numpy()
+    test_results = {}
+    for edge_count, comp_circuit_out in tqdm(complement_circuit_outs.items()):
+        comp_circuit_scores = []
+        model_scores = []
+        for batch in dataloader:
+            model_scores.append(score_func(model_out[batch.key], batch).cpu()) 
+            comp_circuit_scores.append(score_func(comp_circuit_out[batch.key], batch).cpu())
+        model_scores = torch.cat(model_scores)[:, None]
+        comp_circuit_scores = torch.cat(comp_circuit_scores)[:, None]
 
-    # compute t_obs
-    t_obs = hsic(m_scores, c_comp_scores, gamma=sigma)
-
-    # then we compute the trace of the inner product of the cross product and itself (alternatively, the trace of the inner product of the covariance matrices)
-    # we store that value, then for b iterations 
-    t = 0
-    for b in range(B):
-        # permutate the model scores 
-        perm_m_scores = np.random.permutation(m_scores)
-        # compute the new HSIC value 
-        t_i = hsic(perm_m_scores, c_comp_scores, gamma=sigma)
-        # increment t with 1 if new value greater 
-        t += t_obs < t_i
-    # p value = t / B (higher p value -> more instances greater than t_obs -> more likely to be independent)
-    p_value = t / B
-    return IndepResults(not_indep=bool(p_value < alpha), p_value=p_value)
+        # run independencde test 
+        reject_null, t, p_value = indep_test(
+            model_scores.numpy(), comp_circuit_scores.numpy(), B=B, alpha=alpha
+        )
+       
+        # store results
+        test_results[edge_count] = IndepResults(
+            num_t_gt_t_obs=t, B=B, p_value=p_value, reject_null=reject_null, 
+            complement_model_scores=comp_circuit_scores, model_scores=model_scores
+        )
+    return test_results
 
 
 
