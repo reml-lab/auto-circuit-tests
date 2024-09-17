@@ -1,9 +1,17 @@
-from auto_circuit.tasks import Task, TASK_DICT
+from auto_circuit.tasks import Task, TASK_DICT 
+from auto_circuit.tasks import (
+    IOI_TOKEN_CIRCUIT_TASK, 
+    IOI_COMPONENT_CIRCUIT_TASK,
+    DOCSTRING_COMPONENT_CIRCUIT_TASK, 
+    DOCSTRING_TOKEN_CIRCUIT_TASK
+)
 from auto_circuit.metrics.official_circuits.circuits.ioi_official import (
     ioi_head_based_official_edges,
     ioi_true_edges
 
 )
+
+from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc
 
 DOCSTRING_PYTHIA_70M_AUTOENCODER_COMPONENT_CIRCUIT_TASK: Task = Task(
     key="Docstring Autoencoder Component Circuit",
@@ -54,6 +62,13 @@ TASK_DICT.update({
     IOI_COMPONENT_CIRCUIT_TASK.key:
     IOI_COMPONENT_CIRCUIT_TASK
 })
+
+TASK_TO_OUTPUT_ANSWER_FUNCS = {
+    IOI_TOKEN_CIRCUIT_TASK.key: (GradFunc.LOGIT, AnswerFunc.MAX_DIFF), 
+    IOI_COMPONENT_CIRCUIT_TASK.key: (GradFunc.LOGIT, AnswerFunc.MAX_DIFF),
+    DOCSTRING_COMPONENT_CIRCUIT_TASK.key: (GradFunc.LOGIT, AnswerFunc.MAX_DIFF),
+    DOCSTRING_TOKEN_CIRCUIT_TASK.key: (GradFunc.LOGIT, AnswerFunc.MAX_DIFF),
+}
 
 
 

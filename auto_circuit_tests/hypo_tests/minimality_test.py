@@ -25,9 +25,7 @@ from auto_circuit.utils.custom_tqdm import tqdm
 from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, get_score_func
 from auto_circuit_tests.edge_graph import SeqGraph, sample_paths 
 from auto_circuit_tests.hypo_tests.utils import join_values, remove_el
-from auto_circuit_tests.utils.auto_circuit_utils import run_circuit_with_edges_ablated
-
-
+from auto_circuit_tests.utils.auto_circuit_utils import run_circuit_with_edge_ablated
 
 
 class MinResult(NamedTuple):
@@ -36,7 +34,6 @@ class MinResult(NamedTuple):
     null_minimal: bool
     reject_null: bool
     p_value: float
-    diffs: t.Tensor
 
 
 def min_test(
@@ -47,7 +44,7 @@ def min_test(
     null_minimal: bool,
 ) -> Tuple[bool, float]:
     p_value = binom.cdf(k, n, q_star) if null_minimal else 1 - binom.cdf(k, n, q_star)
-    return p_value < alpha, p_value
+    return bool(p_value < alpha), p_value
 
 
 def score_diffs(
@@ -69,110 +66,44 @@ def score_diffs(
     
 
 def minimality_test_edge(
-    model: PatchableModel, 
-    dataloader: PromptDataLoader,
-    edge_outs: BatchOutputs, 
-    circuit_outs: BatchOutputs,
-    inflated_ablated_mean_diff: float,
-    # circuit_outs_inflated: BatchOutputs, 
-    # circuit_outs_ablated: BatchOutputs,
-    grad_func: GradFunc,
-    answer_func: AnswerFunc,
+    ablated_edge_mean_diff: float,
+    inflated_ablated_mean_diffs: list[float],
     null_minimal: bool = True,
     alpha: float = 0.05, 
     q_star: float = 0.9,
-    device: str = t.device('cuda')
 ) -> MinResult: 
-    score_func = get_score_func(grad_func, answer_func)
-    n = 0 
-    k = 0
-    diffs = []
-    for batch in dataloader:
-        batch: PromptPairBatch
-
-        edge_score = score_func(edge_outs[batch.key].to(device), batch)
-        circ_score = score_func(circuit_outs[batch.key].to(device), batch)
-        edge_diff = t.abs(edge_score - circ_score)
-
-        # ablated_score = score_func(circuit_outs_ablated[batch.key].to(device), batch)
-        # inflated_score = score_func(circuit_outs_inflated[batch.key].to(device), batch)
-        # edge_diff_inflated = t.abs(ablated_score - inflated_score)
-
-        diffs.append(edge_diff.detach().cpu())
-        # diffs_inflated.append(edge_diff_inflated.detach().cpu())
-        k += t.sum(edge_diff > inflated_ablated_mean_diff).item()
-        n += batch.clean.size(0)
-    
+    n = len(inflated_ablated_mean_diffs)
+    k = sum(
+        ablated_edge_mean_diff > inflated_ablated_mean_diff
+        for inflated_ablated_mean_diff in inflated_ablated_mean_diffs
+    )
     reject_null, p_value = min_test(k, n, q_star, alpha, null_minimal)
-    return MinResult(k, n, null_minimal, reject_null, p_value, t.cat(diffs))
+    return MinResult(k, n, null_minimal, reject_null, p_value)
 
 
-# run circuits with paths added 
-def _new_instance_prune_scores(
-    model: PatchableModel, 
-    batch_size: int, 
-    init_val: float=0.0,
-    prune_scores: Optional[PruneScores]=None,
-) -> PruneScores: 
-    instance_prune_scores: PruneScores = {}
-    if prune_scores is not None: # repeat prune scores for each instance in batch
-        for mod_name, mask in prune_scores.items():
-            instance_prune_scores[mod_name] = prune_scores[mod_name].unsqueeze(0).repeat_interleave(batch_size, dim=0)
-        return instance_prune_scores
-    for (mod_name, mask) in model.patch_masks.items():
-        instance_prune_scores[mod_name] = t.full((batch_size, *mask.shape), init_val)
-    return prune_scores
-
-def make_inflated_batch_prune_scores(
-    model: PatchableModel,
-    prune_scores: PruneScores, 
-    dataloader: PromptDataLoader,
-    paths: list[list[Edge]],
-    batch_size: int,
-    threshold: float
-) -> Dict[BatchKey, PruneScores]:
-    inflated_batch_prune_scores: Dict[BatchKey, PruneScores] = {}
-    for batch_count, batch in enumerate(dataloader): 
-        batch_prune_scores = _new_instance_prune_scores(model, batch_size, prune_scores=prune_scores)
-        for i in range(batch_size):
-            path = paths[batch_count * batch_size + i]
-            # add path to prune scores
-            for edge in path:
-                batch_prune_scores[edge.dest.module_name][i][edge.patch_idx] = threshold
-        inflated_batch_prune_scores[batch.key] = batch_prune_scores
-    return inflated_batch_prune_scores
-
-
-def _rem_edge_from_paths(paths: list[list[Edge]]) -> list[list[Edge]]:
+def rem_edge_from_paths(paths: list[list[Edge]]) -> list[list[Edge]]:
     return [remove_el(path, random.choice(range(len(path)))) for path in paths]
 
 
 def run_circuits_inflated_ablated(
     model: PatchableModel,
     dataloader: PromptDataLoader,
-    prune_scores: PruneScores,
-    threshold: float,
     ablation_type: AblationType,
     edges: list[Edge],
+    n_paths: Optional[int] = None,
     graph: Optional[SeqGraph] = None,
     paths: Optional[list[list[Edge]]] = None,
     ablated_paths: Optional[list[list[Edge]]] = None,
     token: Optional[bool] = None
-) -> Tuple[BatchOutputs, BatchOutputs]:
+) -> Tuple[CircuitOutputs, CircuitOutputs]:
     # build graph
     if graph is None:
         assert token is not None
         graph = SeqGraph(model.edges, token=token, attn_only=model.cfg.attn_only)
     
-    # TODO: the test is comparing expected values over the dataset, so instead of sampling 
-    # a new path and ablation per instance, we should sample n=200 paths and ablations, and compare their 
-    # perforamnce across the entire dataset
-    
-    
     # sample paths
     if paths is None:
         complement_edges = set(model.edges) - set(edges)
-        n_paths = dataloader.batch_size * len(dataloader)
         paths = sample_paths(
             seq_graph=graph, 
             n_paths=n_paths,
@@ -182,47 +113,40 @@ def run_circuits_inflated_ablated(
         novel_edge_paths = [[edge for edge in path if edge not in edges_set] for path in paths]
 
     # run inflated circuits
-    inflated_batch_prune_scores = make_inflated_batch_prune_scores(
-        model=model,
-        prune_scores=prune_scores,
-        dataloader=dataloader,
-        paths=paths,
-        batch_size=dataloader.batch_size,
-        threshold=threshold,
-    )
-
-    circuit_out_inflated: BatchOutputs = join_values(run_circuits(
-        model=model, 
-        dataloader=dataloader,
-        prune_scores=inflated_batch_prune_scores,
-        thresholds = [threshold],
-        patch_type=PatchType.TREE_PATCH, 
-        ablation_type=ablation_type,
-        reverse_clean_corrupt=False, 
-    ))
-
+    inflated_outs: CircuitOutputs = {}
+    for i, path in tqdm(enumerate(paths), desc="Inflated Circuits", total=len(paths)): 
+        circ_edges = set(path + edges)
+        prune_scores = model.circuit_prune_scores(circ_edges)
+        inflated_out = next(iter(run_circuits(
+            model=model, 
+            dataloader=dataloader,
+            prune_scores=prune_scores,
+            test_edge_counts=[len(circ_edges)],
+            patch_type=PatchType.TREE_PATCH, 
+            ablation_type=ablation_type,
+            reverse_clean_corrupt=False, 
+        ).values()))
+        inflated_outs[i] = {k: v.detach().cpu() for k, v in inflated_out.items()}
+    
     # run ablated circuits
     if ablated_paths is None:
-        ablated_paths = _rem_edge_from_paths(novel_edge_paths)
-    ablated_batch_prune_scores = make_inflated_batch_prune_scores(
-        model=model,
-        prune_scores=prune_scores,
-        dataloader=dataloader,
-        paths=ablated_paths,
-        batch_size=dataloader.batch_size,
-        threshold=threshold,
-    )
+        ablated_paths = rem_edge_from_paths(novel_edge_paths)
+    ablated_outs: CircuitOutputs = {}
+    for i, path in tqdm(enumerate(ablated_paths), desc="Ablated Circuits", total=len(ablated_paths)):
+        circ_edges = set(path + edges)
+        prune_scores = model.circuit_prune_scores(circ_edges)
+        ablated_out = next(iter(run_circuits(
+            model=model, 
+            dataloader=dataloader,
+            prune_scores=prune_scores,
+            test_edge_counts=[len(circ_edges)],
+            patch_type=PatchType.TREE_PATCH, 
+            ablation_type=ablation_type,
+            reverse_clean_corrupt=False, 
+        ).values()))
+        ablated_outs[i] = {k: v.detach().cpu() for k, v in ablated_out.items()}
 
-    circuit_out_ablated: BatchOutputs = join_values(run_circuits(
-        model=model, 
-        dataloader=dataloader,
-        prune_scores=ablated_batch_prune_scores,
-        thresholds = [threshold],
-        patch_type=PatchType.TREE_PATCH, 
-        ablation_type=ablation_type,
-        reverse_clean_corrupt=False, 
-    ))
-    return circuit_out_inflated, circuit_out_ablated
+    return inflated_outs, ablated_outs
     
 
 def minimality_test(
@@ -235,25 +159,47 @@ def minimality_test(
     answer_func: AnswerFunc,
     ablation_type: AblationType,
     token: bool,
-    circuit_outs: Optional[CircuitOutputs]=None,
+    circuit_outs: Optional[BatchOutputs]=None,
     edges_outs: Optional[Dict[Edge, BatchOutputs]]=None, 
-    circuit_out_inflated: Optional[CircuitOutputs]=None,
-    circuit_out_ablated: Optional[CircuitOutputs]=None,
+    inflated_outs: Optional[CircuitOutputs]=None,
+    ablated_outs: Optional[CircuitOutputs]=None,
+    n_paths: Optional[int] = None,
     null_minimal: bool = True,
     alpha: float = 0.05, 
     bonferonni: bool = False,
     q_star: float = 0.9,
-    device: str = t.device('cuda')
-) -> Tuple[Dict[Edge, MinResult], bool]:
+    device: str = t.device('cuda'),
+    stop_if_reject: bool = False
+) -> Tuple[Dict[Edge, MinResult], Optional[bool]]:
     
-    assert (circuit_out_inflated is None) == (circuit_out_ablated is None)
+    assert (inflated_outs is None) == (ablated_outs is None) == (n_paths is not None)
     if bonferonni:
         alpha = alpha / len(edges)
 
-    # TODO: the test is comparing expected values over the dataset, so instead of sampling 
-    # a new path and ablation per instance, we should sample n=200 paths and ablations, and compare their 
-    # perforamnce across the entire dataset
-    
+    # inflated ablated 
+    if inflated_outs is None:
+        inflated_outs, ablated_outs = run_circuits_inflated_ablated(
+            model=model,
+            dataloader=dataloader,
+            ablation_type=ablation_type,
+            edges=edges,
+            n_paths=n_paths,
+            token=token
+        )
+
+    # compute mean diffs for each inflated circuit / ablated circuit
+    inflated_ablated_mean_diffs: list[float] = []
+    for i, inflated_out in inflated_outs.items():
+        inflated_ablated_diffs = score_diffs(
+            dataloader=dataloader,
+            outs_1=inflated_out,
+            outs_2=ablated_outs[i],
+            grad_func=grad_func,
+            answer_func=answer_func,
+            device=device
+        )
+        inflated_ablated_mean_diffs.append(t.cat(inflated_ablated_diffs).mean().item())
+
     # circuit outs
     if circuit_outs is None:
         circuit_outs = next(iter(run_circuits(
@@ -265,59 +211,61 @@ def minimality_test(
             ablation_type=ablation_type,
             reverse_clean_corrupt=False, 
         ).values()))
+
     
-    # edges out 
-    if edges_outs is None:
-        edges_outs = run_circuit_with_edges_ablated(
+    # edge score differences
+    def get_edge_out(edge: Edge) -> BatchOutputs:
+        return run_circuit_with_edge_ablated(
             model=model,
             dataloader=dataloader,
-            edges=edges,
             prune_scores=prune_scores,
+            edge=edge,
             ablation_type=ablation_type,
             threshold=threshold,
             to_cpu=True
         )
-    # inflated ablated 
-    if circuit_out_inflated is None:
-        circuit_out_inflated, circuit_out_ablated = run_circuits_inflated_ablated(
-            model=model,
+    def get_ablated_edge_mean_diff(edge_out: BatchOutputs) -> float:
+        ablated_diffs = score_diffs(
             dataloader=dataloader,
-            prune_scores=prune_scores,
-            threshold=threshold,
-            ablation_type=ablation_type,
-            edges=edges,
-            graph=None,
-            token=token
-        )
-    # compute mean diff
-    inflated_ablated_diffs = score_diffs(
-        dataloader=dataloader,
-        outs_1=circuit_out_inflated,
-        outs_2=circuit_out_ablated,
-        grad_func=grad_func,
-        answer_func=answer_func,
-        device=device
-    )
-    inflated_ablated_mean_diff = t.cat(inflated_ablated_diffs).mean().item()
-
-    # run minimality test
-    min_results = {}
-    for edge in tqdm(edges):
-        min_results[edge] = minimality_test_edge(
-            model=model,
-            dataloader=dataloader,
-            edges=[edge],
-            edge_outs=edges_outs[edge],
-            circuit_outs=circuit_outs,
-            inflated_ablated_mean_diff=inflated_ablated_mean_diff,
+            outs_1=edge_out,
+            outs_2=circuit_outs,
             grad_func=grad_func,
             answer_func=answer_func,
-            null_minimal=null_minimal,
-            alpha=alpha,
-            q_star=q_star,
             device=device
         )
-    return min_results, all(r.reject_null for r in min_results.values())
+        return t.cat(ablated_diffs).mean().item()  
+    
+    ablated_edge_mean_diffs: dict[Edge, float] = {}
+    # edges out 
+    if edges_outs is not None:
+        # compute mean diffs for each ablated edge
+        for edge in edges:
+            ablated_diffs = get_ablated_edge_mean_diff(edges_outs[edge])
+            ablated_edge_mean_diffs[edge] = t.cat(ablated_diffs).mean().item()
+
+    # run minimality test
+    min_results: dict[Edge, MinResult] = {}
+    for edge in tqdm(edges):
+        # dynamically compute edge out (saved time if stop_if_reject)
+        if edge not in ablated_edge_mean_diffs:
+            edge_out = get_edge_out(edge)
+            ablated_edge_mean_diffs[edge] = get_ablated_edge_mean_diff(edge_out)
+        # run minimality test
+        min_results[edge] = minimality_test_edge(
+            ablated_edge_mean_diff=ablated_edge_mean_diffs[edge],
+            inflated_ablated_mean_diffs=inflated_ablated_mean_diffs,
+            null_minimal=null_minimal,
+            alpha=alpha,
+            q_star=q_star
+        )
+        print(min_results[edge].num_edge_score_gt_ref)
+        if stop_if_reject and min_results[edge].reject_null:
+            break
+    
+    reject_null = None
+    if null_minimal:
+        reject_null = any(r.reject_null for r in min_results.values())
+    return min_results, reject_null
 
 
 def plot_p_values(min_results: dict[Edge, MinResult], edge_scores: dict[Edge, t.Tensor], alpha: float = 0.05):

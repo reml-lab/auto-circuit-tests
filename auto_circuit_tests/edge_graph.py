@@ -469,7 +469,8 @@ def visualize_graph(graph:SeqGraph, sort_by_head: bool=True, max_layer: int=None
 
     # Draw the edges
     edge_colors = [G[u][v]['color'] for u, v in G.edges()]
-    nx.draw_networkx_edges(G, pos, edge_color=edge_colors, arrows=True, width=0.5, arrowsize=10)
+    edge_sizes = [1 if color == default_color else 4 for color in edge_colors]
+    nx.draw_networkx_edges(G, pos, edge_color=edge_colors, width=edge_sizes, arrows=True, arrowsize=10)
 
     # Add labels to the nodes
     labels = {node: f"{node.split('_')[0]}" for node in G.nodes()}

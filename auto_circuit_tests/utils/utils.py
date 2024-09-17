@@ -119,3 +119,6 @@ def get_exp_dir(
 
 def edge_key(edge: Edge):
     return (edge.src.name, edge.dest.name, edge.seq_idx)
+
+def edge_name(edge: Edge):
+    return f"{edge.name}{'_' + edge.seq_idx if edge.seq_idx is not None else ''}"
