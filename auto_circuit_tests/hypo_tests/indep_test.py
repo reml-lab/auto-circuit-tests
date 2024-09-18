@@ -40,7 +40,7 @@ def indep_test(X: np.ndarray, Y: np.ndarray, B: int, alpha: float) -> Tuple[bool
         # increment t with 1 if new value greater
         t += t_obs < t_i
     p_value = t / B
-    return p_value < alpha, t, p_value
+    return bool(p_value < alpha), int(t), p_value
 
 
 class IndepResults(NamedTuple):

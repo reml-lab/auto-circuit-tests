@@ -26,6 +26,12 @@ from auto_circuit.utils.misc import module_by_name
 
 EdgeScore = Tuple[str, str, float]
 
+def edge_key(edge: Edge):
+    return (edge.src.name, edge.dest.name, edge.seq_idx)
+
+def edge_name(edge: Edge):
+    return f"{edge.name}{'_' + str(edge.seq_idx) if edge.seq_idx is not None else ''}"
+
 def run_fully_ablated_model(
     model: PatchableModel, 
     dataloader: PromptDataLoader,

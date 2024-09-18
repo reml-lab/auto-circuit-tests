@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Dict, Any
 
 import torch
+import torch as t
 
 from auto_circuit.types import AblationType
 from auto_circuit.types import Edge
@@ -117,8 +118,9 @@ def get_exp_dir(
     exp_dir = edge_dir / f"{alpha}_{epsilon}_{q_star}"
     return task_dir, ablation_dir, out_answer_dir, ps_dir, edge_dir, exp_dir
 
-def edge_key(edge: Edge):
-    return (edge.src.name, edge.dest.name, edge.seq_idx)
-
-def edge_name(edge: Edge):
-    return f"{edge.name}{'_' + edge.seq_idx if edge.seq_idx is not None else ''}"
+def get_el_rank(x: t.Tensor) -> t.Tensor:
+    indices = t.argsort(x)
+    rank = torch.zeros_like(x)
+    for i, index in enumerate(indices):
+        rank[index] = i
+    return rank
