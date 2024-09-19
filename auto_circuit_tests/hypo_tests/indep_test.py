@@ -48,8 +48,8 @@ class IndepResults(NamedTuple):
     B: int
     p_value: float
     reject_null: bool
-    complement_model_scores: torch.Tensor
-    model_scores: torch.Tensor
+    complement_model_scores: list[float]
+    model_scores: list[float]
 
 
 def independence_tests(
@@ -105,7 +105,8 @@ def independence_tests(
         # store results
         test_results[edge_count] = IndepResults(
             num_t_gt_t_obs=t, B=B, p_value=p_value, reject_null=reject_null, 
-            complement_model_scores=comp_circuit_scores, model_scores=model_scores
+            complement_model_scores=comp_circuit_scores.numpy().tolist(), 
+            model_scores=model_scores.numpy().tolist()
         )
     return test_results
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import networkx as nx
 import matplotlib.pyplot as plt
 
-from auto_circuit.types import SrcNode, DestNode, Edge, Node
+from auto_circuit.types import SrcNode, DestNode, Edge, Node, AblationType
 from auto_circuit.utils.custom_tqdm import tqdm
 
 class NodeType(Enum):
@@ -405,6 +405,26 @@ def sample_paths(
         for _ in tqdm(range(n_paths))
     ]
 
+def find_unused_edges(
+    edges: list[Edge], 
+    ablation_type: AblationType, 
+    token_circuit: Optional[bool]=None, 
+    attn_only: Optional[bool]=None, 
+    circ_graph: Optional[SeqGraph]=None
+) -> Tuple[list[Edge], list[Edge], SeqGraph]:
+    # contruct a graph from the pruned circuit, to further prune edges 
+    if circ_graph is None:
+        circ_graph = SeqGraph(edges, token=token_circuit, attn_only=attn_only)
+    # compute valid edges 
+    used_edges = []
+    unused_edges = []
+    reach_req = ablation_type == AblationType.RESAMPLE
+    for edge in edges:
+        if edge_in_path(edge, circ_graph, reach_req=reach_req, in_path_req=True):
+            used_edges.append(edge)
+        else:
+            unused_edges.append(edge)
+    return used_edges, unused_edges, circ_graph
 
 # TODO: plot graph 
 def visualize_graph(

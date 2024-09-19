@@ -26,6 +26,7 @@ from auto_circuit.utils.misc import module_by_name
 
 EdgeScore = Tuple[str, str, float]
 
+
 def edge_key(edge: Edge):
     return (edge.src.name, edge.dest.name, edge.seq_idx)
 
@@ -101,6 +102,21 @@ def run_circuit_with_edges_ablated(
         )
     return edge_outs
 
+
+def flat_prune_scores_ordered(prune_scores: PruneScores, order: list[str], per_inst: bool=False) -> t.Tensor:
+    """
+    Flatten the prune scores into a single, 1-dimensional tensor.
+
+    Args:
+        prune_scores: The prune scores to flatten.
+        per_inst: Whether the prune scores are per instance.
+
+    Returns:
+        The flattened prune scores.
+    """
+    start_dim = 1 if per_inst else 0
+    cat_dim = 1 if per_inst else 0
+    return t.cat([prune_scores[mod_name].flatten(start_dim) for mod_name in order], cat_dim)
 
 
 def flat_prune_scores(prune_scores: PruneScores, per_inst: bool=False) -> t.Tensor:

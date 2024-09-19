@@ -76,7 +76,7 @@ def equiv_test(
         # compute probability of >= k successes given p
         right_tail = 1 - binom.cdf(k, n, 1 / 2 - epsilon)
         reject_null = left_tail < alpha and right_tail < alpha
-    return reject_null, left_tail, right_tail
+    return bool(reject_null), left_tail, right_tail
 
 
 
@@ -108,8 +108,8 @@ class EquivResult(NamedTuple):
     reject_null: bool
     left_tail: float
     right_tail: float
-    circ_scores: torch.Tensor
-    model_scores: torch.Tensor
+    circ_scores: list[float]
+    model_scores: list[float]
 
 def equiv_tests(
     model: PatchableModel, 
@@ -163,8 +163,8 @@ def equiv_tests(
             reject_null=reject_nul,
             left_tail=left_tail,
             right_tail=right_tail,
-            circ_scores=circ_scores.detach().cpu(), 
-            model_scores=model_scores.detach().cpu()
+            circ_scores=circ_scores.detach().cpu().numpy().tolist(), 
+            model_scores=model_scores.detach().cpu().numpy().tolist()
         )
     return test_results
 
