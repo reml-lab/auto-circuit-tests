@@ -17,7 +17,7 @@ def is_notebook() -> bool:
         return False      # Probably standard Python interpreter
 import os 
 if is_notebook():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1" #"1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2" #"1"
 
 
 # In[2]:
@@ -51,7 +51,7 @@ class Config:
     grad_funcs: List[GradFunc] = field(default_factory=lambda: [GradFunc.LOGIT, GradFunc.LOGPROB])
     answer_funcs: List[AnswerFunc] = field(default_factory = lambda: [AnswerFunc.MAX_DIFF, AnswerFunc.AVG_VAL])
     clean_corrupt: Optional[str] = None
-    edge_start: Optional[int] = None 
+    edge_start: Optional[int] = None
     edge_range: Optional[int] = None
 
 def conf_post_init(conf: Config):
@@ -95,6 +95,12 @@ prune_score_dict: Dict[Tuple[GradFunc, AnswerFunc], PruneScores] = {
     for grad_func, answer_func in itertools.product(conf.grad_funcs, conf.answer_funcs)
 }
 
+full_model_score_dict: Dict[Tuple[GradFunc, AnswerFunc], PruneScores] = {
+    (grad_func, answer_func): task.model.new_prune_scores()
+    for grad_func, answer_func in itertools.product(conf.grad_funcs, conf.answer_funcs)
+}
+
+
 src_outs: Dict[BatchKey, t.Tensor] = batch_src_ablations(
     task.model,
     task.train_loader,
@@ -103,7 +109,7 @@ src_outs: Dict[BatchKey, t.Tensor] = batch_src_ablations(
 )
 
 
-# In[19]:
+# In[8]:
 
 
 # sort by seq_idx, src_idx, dest.layer, dest.head
@@ -114,18 +120,17 @@ if conf.edge_start is not None and conf.edge_range is not None:
     edges = edges[conf.edge_start:min(conf.edge_start + conf.edge_range, len(edges))]
 
 
-# In[ ]:
+# In[9]:
 
 
 # compute scores on full model
-if conf.edge_start is None:
-    with t.no_grad():
-        for batch in tqdm(task.train_loader, desc="Full Model Loss"):
-            logits = task.model(batch.clean)[task.model.out_slice]
-            for (grad_func, answer_func) in itertools.product(conf.grad_funcs, conf.answer_funcs):
-                loss = compute_loss(task.model, batch, grad_func.value, answer_func.value, logits=logits)
-                for mod_name, mod in task.model.patch_masks.items():
-                    prune_score_dict[(grad_func, answer_func)][mod_name] += loss.sum().item()
+with t.no_grad():
+    for batch in tqdm(task.train_loader, desc="Full Model Loss"):
+        logits = task.model(batch.clean)[task.model.out_slice]
+        for (grad_func, answer_func) in itertools.product(conf.grad_funcs, conf.answer_funcs):
+            loss = compute_loss(task.model, batch, grad_func.value, answer_func.value, logits=logits)
+            for mod_name, mod in task.model.patch_masks.items():
+                full_model_score_dict[(grad_func, answer_func)][mod_name] += loss.sum().item()
 
 # compute scores for each ablated edge 
 with t.no_grad():
@@ -138,10 +143,23 @@ with t.no_grad():
                 logits = task.model(batch.clean)[task.model.out_slice]
             for (grad_func, answer_func) in itertools.product(conf.grad_funcs, conf.answer_funcs):
                 loss = compute_loss(task.model, batch, grad_func.value, answer_func.value, logits=logits)
-                prune_score_dict[(grad_func, answer_func)][edge.dest.module_name][edge.patch_idx] -= loss.sum().item()
+                full_model_score = full_model_score_dict[(grad_func, answer_func)][edge.dest.module_name][edge.patch_idx]
+                prune_score_dict[(grad_func, answer_func)][edge.dest.module_name][edge.patch_idx] = full_model_score - loss.sum().item()
 
 
-# In[8]:
+# In[10]:
+
+
+prune_scores_loaded = t.load(ablation_dir / f'{grad_func.name}_{answer_func.name}' / 'act_patch_prune_scores.pkl')
+
+
+# In[12]:
+
+
+[t.dist(prune_scores_loaded[k], prune_score_dict[(grad_func, answer_func)][k]) for k in prune_scores_loaded.keys()]
+
+
+# In[10]:
 
 
 # save out to directories 
