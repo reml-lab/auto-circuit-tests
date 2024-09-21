@@ -1,6 +1,7 @@
 from typing import Callable, Dict, Tuple, Union, Optional, Any, Literal, NamedTuple
 import math
 from enum import Enum
+from functools import partial
 
 import torch 
 import numpy as np
@@ -21,7 +22,7 @@ from auto_circuit.types import (
 from auto_circuit.utils.patchable_model import PatchableModel
 from auto_circuit.utils.custom_tqdm import tqdm
 
-from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, get_score_func
+from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, compute_scores
 
 class Side(Enum): 
     LEFT = "left"
@@ -32,11 +33,11 @@ def compute_num_C_gt_M(
     circ_out: CircuitOutputs, 
     model_out: CircuitOutputs, 
     dataloader: PromptDataLoader, 
-    grad_function: GradFunc,
-    answer_function: AnswerFunc,
+    grad_func: GradFunc,
+    answer_func: AnswerFunc,
 ) -> tuple[int, int, torch.Tensor, torch.Tensor]:
     # compute number of samples with ablated C > M
-    score_func = get_score_func(grad_function, answer_function)
+    score_func = partial(compute_scores, grad_func=grad_func, answer_func=answer_func)
     num_ablated_C_gt_M = 0
     n = 0
     circ_scores = []
@@ -45,8 +46,8 @@ def compute_num_C_gt_M(
         bs = batch.clean.size(0)
         circ_out_batch = circ_out[batch.key]
         model_out_batch = model_out[batch.key]
-        circ_score = score_func(circ_out_batch, batch)
-        model_score = score_func(model_out_batch, batch)
+        circ_score = score_func(circ_out_batch, batch, model_out_batch)
+        model_score = score_func(model_out_batch, batch, model_out_batch)
         num_ablated_C_gt_M += torch.sum(circ_score > model_score).item()
         n += bs
         circ_scores.append(circ_score)
@@ -115,8 +116,8 @@ def equiv_tests(
     model: PatchableModel, 
     dataloader: PromptDataLoader,
     prune_scores: PruneScores,
-    grad_function: GradFunc,
-    answer_function: AnswerFunc,
+    grad_func: GradFunc,
+    answer_func: AnswerFunc,
     ablation_type: AblationType,
     patch_type: PatchType = PatchType.TREE_PATCH,
     edge_counts: Optional[list[int]] = None,
@@ -151,7 +152,7 @@ def equiv_tests(
     test_results = {}
     for edge_count, circuit_out in circuit_outs.items():
         num_ablated_C_gt_M, n, circ_scores, model_scores = compute_num_C_gt_M(
-            circuit_out, model_out, dataloader, grad_function, answer_function
+            circuit_out, model_out, dataloader, grad_func, answer_func
         )
         reject_nul, left_tail, right_tail = equiv_test(
             num_ablated_C_gt_M, n, alpha, epsilon, null_equiv=null_equiv
@@ -175,8 +176,8 @@ def equiv_tests(
 #     model: PatchableModel,
 #     dataloader: PromptDataLoader,
 #     prune_scores: PruneScores,
-#     grad_function: GradFunc,
-#     answer_function: AnswerFunc,
+#     grad_func: GradFunc,
+#     answer_func: AnswerFunc,
 #     ablation_type: AblationType, 
 #     use_abs: bool = True,
 #     side: Side = Side.NONE,
@@ -200,8 +201,8 @@ def equiv_tests(
 #             model=model, 
 #             dataloader=dataloader,
 #             prune_scores=prune_scores,
-#             grad_function=grad_function,
-#             answer_function=answer_function,
+#             grad_func=grad_func,
+#             answer_func=answer_func,
 #             ablation_type=ablation_type,
 #             edge_counts=[edge_count],
 #             use_abs=use_abs,
@@ -227,8 +228,8 @@ def equiv_tests(
 #     model: PatchableModel,
 #     dataloader: PromptDataLoader,
 #     prune_scores: PruneScores,
-#     grad_function: GradFunc,
-#     answer_function: AnswerFunc,
+#     grad_func: GradFunc,
+#     answer_func: AnswerFunc,
 #     ablation_type: AblationType, 
 #     use_abs: bool = True,
 #     side: Side = Side.NONE,
@@ -253,8 +254,8 @@ def equiv_tests(
 #             model=model, 
 #             dataloader=dataloader,
 #             prune_scores=prune_scores,
-#             grad_function=grad_function,
-#             answer_function=answer_function,
+#             grad_func=grad_func,
+#             answer_func=answer_func,
 #             ablation_type=ablation_type,
 #             edge_counts=edge_counts,
 #             model_out=model_out,
@@ -295,8 +296,8 @@ def equiv_tests(
 #     model: PatchableModel,
 #     dataloader: PromptDataLoader,
 #     prune_scores: PruneScores,
-#     grad_function: GradFunc,
-#     answer_function: AnswerFunc,
+#     grad_func: GradFunc,
+#     answer_func: AnswerFunc,
 #     ablation_type: AblationType, 
 #     use_abs: bool = True,
 #     side: Side = Side.NONE,
@@ -316,8 +317,8 @@ def equiv_tests(
 #             model=model, 
 #             dataloader=dataloader,
 #             prune_scores=prune_scores,
-#             grad_function=grad_function,
-#             answer_function=answer_function,
+#             grad_func=grad_func,
+#             answer_func=answer_func,
 #             ablation_type=ablation_type,
 #             edge_counts=[edge_count],
 #             model_out=model_out,

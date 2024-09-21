@@ -19,12 +19,12 @@ def is_notebook() -> bool:
 
 import os
 if is_notebook():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0" #"1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "5" #"1"
     # os.environ['CUDA_LAUNCH_BLOCKING']="1"
     # os.environ['TORCH_USE_CUDA_DSA'] = "1"
 
 
-# In[2]:
+# In[ ]:
 
 
 import torch 
@@ -42,7 +42,7 @@ torch.cuda.is_available()
 # 
 # 
 
-# In[3]:
+# In[ ]:
 
 
 import os
@@ -66,15 +66,18 @@ from tqdm import tqdm
 from omegaconf import OmegaConf
 
 
+from auto_circuit.data import PromptPairBatch, PromptDataLoader
 from auto_circuit.utils.patchable_model import PatchableModel
-from auto_circuit.types import BatchKey, PruneScores, CircuitOutputs, AblationType, Edge, BatchOutputs
+from auto_circuit.types import (BatchKey, PruneScores, CircuitOutputs, AblationType, 
+                                Edge, BatchOutputs, EdgeCounts)
 from auto_circuit.prune_algos.mask_gradient import mask_gradient_prune_scores
 from auto_circuit.prune_algos.activation_patching import act_patch_prune_scores
+from auto_circuit.prune_algos.ACDC import acdc_prune_scores
 from auto_circuit.visualize import draw_seq_graph
 from auto_circuit.utils.custom_tqdm import tqdm
 from auto_circuit.utils.tensor_ops import desc_prune_scores
 
-from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc
+from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, DIV_ANSWER_FUNCS
 # from auto_circuit_tests.faithful_metrics import FaithfulMetric
 
 from auto_circuit_tests.utils.auto_circuit_utils import (
@@ -83,6 +86,7 @@ from auto_circuit_tests.utils.auto_circuit_utils import (
     flat_prune_scores_ordered
 )
 
+from auto_circuit_tests.faith_metrics import compute_faith_metrics
 from auto_circuit_tests.hypo_tests.equiv_test import equiv_tests
 from auto_circuit_tests.hypo_tests.minimality_test import (
     run_circuits_inflated_ablated, 
@@ -116,23 +120,48 @@ from auto_circuit_tests.utils.utils import (
     load_json, # should probably move this to auto_circuit_tests.utils
     get_el_rank
 )
+from auto_circuit_tests.utils.utils import get_exp_dir
 
 
-# In[203]:
+# In[4]:
+
+
+# ok what do I want to do? 
+# I want to equivalent equivalence and fraction of loss recovered for the current metric and other metrics
+# for minimality I'll just to the standard metric
+
+# so I think the mechanistic explanation for ACDC doing better is probably 
+    # self-repair mechanisms are more prominant when ablating edges from the full model, but the 
+    # self-repair stuff is discarded by ACDC (and thresholding by prune score), so you do need certain edges
+    # with no ablation score, and so activation pathcing has to search "farther out" for these important edges
+
+
+# In[5]:
+
+
+# 3. for IOI Token, use ACDC++ (combine attribution patching and ACDC) so we can tractably run ACDC
+
+
+# In[8]:
 
 
 # config class
 from dataclasses import dataclass, field
 @dataclass 
 class Config: 
-    task: str = "Docstring Token Circuit" # check how many edges in component circuit (probably do all but ioi toen)
+    task: str = "Docstring Component Circuit" # check how many edges in component circuit (probably do all but ioi toen)
     ablation_type: AblationType = AblationType.RESAMPLE
     grad_func: GradFunc = GradFunc.LOGIT
     answer_func: AnswerFunc = AnswerFunc.MAX_DIFF
+    eval_grad_func: Optional[GradFunc] = None # TODO: used to evaluate faithfulness
+    eval_answer_func: Optional[AnswerFunc] = None
     ig_samples: Optional[int] = None
     layerwise: bool = False
-    act_patch: bool = False
-    fracs: list[float] = field(default_factory=lambda:[1/2**n for n in range(1, 11)]) #TODO: switch to frac edges I guess
+    act_patch: bool = True
+    acdc: bool = False
+    edge_counts: EdgeCounts = EdgeCounts.LOGARITHMIC
+    tao_bases: list[float] = field(default_factory=lambda: [1, 5])
+    tao_exps: list[float] = field(default_factory=lambda: list(range(-5, -1)))
     prune_score_thresh: bool = False
     alpha: float = 0.05
     epsilon: Optional[float] = 0.1
@@ -149,8 +178,15 @@ class Config:
         # always override clean_corrupt for now
         self.clean_corrupt = "corrupt" if self.ablation_type == AblationType.RESAMPLE else None
 
+        # set eval_grad_func and faith_answer_func to logit and max diff if answer_func is div
+        if self.answer_func in DIV_ANSWER_FUNCS: 
+            if self.eval_grad_func is None:
+                self.eval_grad_func = GradFunc.LOGIT
+            if self.eval_answer_func is None:
+                self.eval_answer_func = AnswerFunc.MAX_DIFF
 
-# In[204]:
+
+# In[9]:
 
 
 # initialize config 
@@ -162,11 +198,10 @@ if not is_notebook():
     conf = Config(**conf_dict)
 
 
-# In[205]:
+# In[10]:
 
 
 # handle directories
-from auto_circuit_tests.utils.utils import get_exp_dir
 task_dir, ablation_dir, out_answer_dir, ps_dir, edge_dir, exp_dir = get_exp_dir(
     task_key=conf.task, 
     ablation_type=conf.ablation_type,
@@ -175,6 +210,7 @@ task_dir, ablation_dir, out_answer_dir, ps_dir, edge_dir, exp_dir = get_exp_dir(
     ig_samples=conf.ig_samples,
     layerwise=conf.layerwise,
     act_patch=conf.act_patch,
+    acdc=conf.acdc,
     alpha=conf.alpha,
     epsilon=conf.epsilon,
     q_star=conf.q_star,
@@ -183,7 +219,7 @@ task_dir, ablation_dir, out_answer_dir, ps_dir, edge_dir, exp_dir = get_exp_dir(
 exp_dir.mkdir(parents=True, exist_ok=True)
 
 
-# In[206]:
+# In[ ]:
 
 
 # initialize task
@@ -193,9 +229,32 @@ task.init_task()
 
 # # Prune Scores
 
+# ## ACDC Prune Scores
+
+# In[12]:
+
+
+if conf.acdc:
+    auto_ps_path = out_answer_dir / "auto_prune_scores.pkl"
+    if auto_ps_path.exists():
+        auto_prune_scores = torch.load(auto_ps_path)
+    else:
+        auto_prune_scores = acdc_prune_scores(
+            model=task.model, 
+            dataloader=task.train_loader, 
+            official_edges=None,
+            tao_exps=conf.tao_exps,#[-3],
+            tao_bases=conf.tao_bases,#[1],
+            faithfulness_target=conf.answer_func.value, 
+        )
+        if conf.save_cache:
+            torch.save(auto_prune_scores, auto_ps_path)
+    taos = sorted([tao_base * 10**tao_exp for tao_base, tao_exp in product(conf.tao_bases, conf.tao_exps)])
+
+
 # ## Activation Patching Prune Scores
 
-# In[190]:
+# In[ ]:
 
 
 # load from cache if exists 
@@ -214,7 +273,7 @@ if conf.act_patch and act_prune_scores is None:
 
 # ##  Attribution Patching Prune Scores
 
-# In[191]:
+# In[ ]:
 
 
 if not conf.act_patch:
@@ -229,8 +288,8 @@ if not conf.act_patch:
             model=task.model, 
             dataloader=task.train_loader,
             official_edges=None,
-            grad_function=conf.grad_func.value, 
-            answer_function=conf.answer_func.value, #answer_function,
+            grad_func=conf.grad_func.value, 
+            answer_func=conf.answer_func.value, #answer_func,
             mask_val=0.0 if conf.ig_samples is None else None, 
             ablation_type=conf.ablation_type,
             integrated_grad_samples=conf.ig_samples, 
@@ -255,7 +314,7 @@ if not conf.act_patch:
 
 # ### MSE
 
-# In[193]:
+# In[ ]:
 
 
 # mse and median se
@@ -282,7 +341,7 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # ### Spearman Rank Correlation
 
-# In[194]:
+# In[ ]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
@@ -316,7 +375,7 @@ if not conf.act_patch:
     min_0_rank, max_0_rank = act_prune_scores_0_rank.min().item(), act_prune_scores_0_rank.max().item()
 
 
-# In[196]:
+# In[ ]:
 
 
 if not conf.act_patch:
@@ -335,7 +394,7 @@ if not conf.act_patch:
     plt.savefig(ps_dir / "rank_corr.png")
 
 
-# In[197]:
+# In[ ]:
 
 
 # TODO: I think there must be a bug? 
@@ -361,7 +420,7 @@ if not conf.act_patch:
 
 # ### Compute Fraction of "Mis-Signed" Components
 
-# In[198]:
+# In[ ]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
@@ -426,7 +485,7 @@ act_rank_by_component = prune_score_rankings_by_component(act_prune_scores, act_
 attr_rank_by_component = prune_score_rankings_by_component(attr_prune_scores, attr_prune_scores_abs_rank, order)
 
 
-# In[202]:
+# In[ ]:
 
 
 import matplotlib.pyplot as plt
@@ -491,7 +550,7 @@ save_json({str(k): v for k, v in rank_correlations.items()}, ps_dir, "rank_cor_b
 
 # ### Plot Scores
 
-# In[21]:
+# In[ ]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
@@ -504,7 +563,7 @@ if not conf.act_patch and act_prune_scores is not None:
     plt.savefig(ps_dir / "act_attr_scores.png")
 
 
-# In[22]:
+# In[ ]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
@@ -521,16 +580,21 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # Constructing circuits from prune scores using either edge or fraction of prune score thresholds
 
-# In[23]:
+# In[14]:
 
 
 # set prune scores
-prune_scores = act_prune_scores if conf.act_patch else attr_prune_scores
+if conf.acdc:
+    prune_scores = auto_prune_scores
+elif conf.act_patch:
+    prune_scores = act_prune_scores
+else:
+    prune_scores = attr_prune_scores
 # sort prune scores
 sorted_prune_scores = desc_prune_scores(prune_scores)
 
 
-# In[24]:
+# In[ ]:
 
 
 # plot prune scores
@@ -549,27 +613,32 @@ fig, ax = plot_prune_scores(sorted_prune_scores.cpu().numpy().tolist())
 plt.savefig(exp_dir / "edge_scores.png")
 
 
-# In[25]:
+# In[ ]:
 
 
 # compute n_edges 
-import math
+from auto_circuit.utils.graph_utils import edge_counts_util
 circ_edges = []
-if conf.prune_score_thresh: # frac total prune scores
-    # get sum of prune scores up to each index 
-    cum_prune_scores = np.cumsum(sorted_prune_scores.detach().cpu().numpy())
-    # normalize by total prune scores
-    norm_cum_prune_scores = cum_prune_scores / cum_prune_scores[-1] 
-    for frac in conf.fracs:
-        # get first index where fraction is greater than frac_prune_scores
-        n_edges = np.argmax(norm_cum_prune_scores > (1 - frac)) 
-        circ_edges.append(int(n_edges))
-else: # frac edges
-    circ_edges = [int(math.ceil(task.model.n_edges * frac)) for frac in reversed(conf.fracs)]
-circ_thresholds = [sorted_prune_scores[n_edges].item() for n_edges in circ_edges]
+if conf.acdc:
+     circ_edges = [
+         t.sum(t.cat([t.flatten(v) for v in auto_prune_scores.values()]) > tao).item()
+        for tao in taos
+    ]
+     circ_thresholds = taos[1:] + [t.inf] # prune scores set to tau if change less than tau
+else:
+    # if conf.prune_score_thresh: # frac total prune scores
+    #     # get sum of prune scores up to each index 
+    #     cum_prune_scores = np.cumsum(sorted_prune_scores.detach().cpu().numpy())
+    #     # normalize by total prune scores
+    #     norm_cum_prune_scores = cum_prune_scores / cum_prune_scores[-1] 
+    #     for frac in conf.fracs:
+    #         # get first index where fraction is greater than frac_prune_scores
+    #         n_edges = np.argmax(norm_cum_prune_scores > (1 - frac)) 
+    #         circ_edges.append(int(n_edges))
+    circ_edges = edge_counts_util(task.model.edges, conf.edge_counts, zero_edges=True)
+    circ_thresholds = [sorted_prune_scores[n_edges-1].item() for n_edges in circ_edges]
 
 save_json(circ_edges, edge_dir, "n_circ_edges")
-save_json(circ_thresholds, edge_dir, "circ_thresholds")
 
 
 # # Faithfulness: % Loss Recovered and Equivalence Test
@@ -584,7 +653,7 @@ save_json(circ_thresholds, edge_dir, "circ_thresholds")
 # - frac mean difference recovered: E[score(C)] - E[score(A)] / E[score(M)] - E[score(A)] 
 # (SAE work, similar to causal scrubbing, don't need to worry about variance)
 
-# In[26]:
+# In[ ]:
 
 
 # first full model outt and ablated model out
@@ -612,7 +681,7 @@ ablated_out_test: BatchOutputs = run_fully_ablated_model(
 )
 
 
-# In[27]:
+# In[ ]:
 
 
 # next get circuit outs for each threshold
@@ -645,92 +714,8 @@ circuit_outs_test: CircuitOutputs = run_circuits(
 # - mean difference: E[score(M)] - E[score(C)] 
 # - frac mean difference recovered: E[score(C)] - E[score(A)] / E[score(M)] - E[score(A)]
 
-# In[28]:
+# In[ ]:
 
-
-# TODO: compute on train and test distribution
-from auto_circuit_tests.score_funcs import get_score_func
-from auto_circuit.data import PromptPairBatch, PromptDataLoader
-
-def compute_faith_metrics(
-    dataloader: PromptDataLoader,
-    model_outs: BatchOutputs,
-    ablated_outs: BatchOutputs,
-    circs_outs: CircuitOutputs,
-    grad_func: GradFunc,
-    answer_func: AnswerFunc,
-): 
-
-    score_func = get_score_func(grad_func, answer_func)
-    faith_metrics: Dict[int, Dict[str, float]] = {}
-    faith_metric_results: Dict[int, Dict[str, float]] = {}
-
-    for n_edges, circ_outs in tqdm(list(circs_outs.items())):
-        abs_errors = []
-        model_scores = []
-        ablated_scores = []
-        circ_scores = []
-
-        n = 0
-        for batch in dataloader: 
-            batch: PromptPairBatch 
-            model_out = model_outs[batch.key]
-            ablated_out = ablated_outs[batch.key]
-            circ_out = circ_outs[batch.key].to(model_out.device)
-
-            # compute score and abs error, sum
-            model_scores_b = score_func(model_out, batch)
-            ablated_scores_b = score_func(ablated_out, batch)
-            circ_scores_b = score_func(circ_out, batch)
-            abs_errors_b = torch.abs(model_scores_b - circ_scores_b)
-
-            model_scores.append(model_scores_b)
-            ablated_scores.append(ablated_scores_b)
-            circ_scores.append(circ_scores_b)
-            abs_errors.append(abs_errors_b)
-        
-        # aggregate and compute means 
-        abs_errors = torch.cat(abs_errors)
-        model_scores = torch.cat(model_scores)
-        ablated_scores = torch.cat(ablated_scores)
-        circ_scores = torch.cat(circ_scores)
-        model_scores_mean = model_scores.mean()
-        ablated_scores_mean = ablated_scores.mean()
-        circ_scores_mean = circ_scores.mean()
-        abs_error_mean = abs_errors.mean()
-
-        # compute std dev 
-        model_scores_std = model_scores.std()
-        ablated_scores_std = ablated_scores.std()
-        circ_scores_std = circ_scores.std()
-        abs_error_std = abs_errors.std()
-
-        # compute mean diff and farc mean diff recovered 
-        mean_diff = model_scores_mean - circ_scores_mean
-        frac_mean_diff_recovered = (circ_scores_mean - ablated_scores_mean) / (model_scores_mean - ablated_scores_mean)
-        
-        # store scores 
-        faith_metrics[n_edges] = {
-            "model_scores": model_scores.cpu().numpy().tolist(),
-            "ablated_scores": ablated_scores.cpu().numpy().tolist(),
-            "circ_scores": circ_scores.cpu().numpy().tolist(),
-            "abs_errors": abs_errors.cpu().numpy().tolist(),
-        }
-
-        # log results
-        faith_metric_results[n_edges] = {
-            "model_scores_mean": model_scores_mean.item(),
-            "model_scores_std": model_scores_std.item(),
-            "ablated_scores_mean": ablated_scores_mean.item(),
-            "ablated_scores_std": ablated_scores_std.item(),
-            "circ_scores_mean": circ_scores_mean.item(),
-            "circ_scores_std": circ_scores_std.item(),
-            "abs_error_mean": abs_error_mean.item(),
-            "abs_error_std": abs_error_std.item(),
-            "mean_diff": mean_diff.item(),
-            "frac_mean_diff_recovered": frac_mean_diff_recovered.item(),
-        }
-    return faith_metric_results, faith_metrics
 
 faith_metric_results_train, faith_metrics_train = compute_faith_metrics(
     task.train_loader,
@@ -756,191 +741,52 @@ save_json(faith_metric_results_test, ps_dir, "faith_metric_results_test")
 save_json(faith_metrics_test, ps_dir, "faith_metrics_test")
 
 
+# In[23]:
+
+
+conf.eval_answer_func
+
+
+# In[24]:
+
+
+# faith metrics eval 
+if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_func:
+    faith_metric_results_train_eval, faith_metrics_train_eval = compute_faith_metrics(
+        task.train_loader,
+        model_out_train,
+        ablated_out_train,
+        circuit_outs_train,
+        conf.eval_grad_func,
+        conf.eval_answer_func,
+    )
+
+    faith_metric_results_test_eval, faith_metrics_test_eval = compute_faith_metrics(
+        task.test_loader,
+        model_out_test,
+        ablated_out_test,
+        circuit_outs_test,
+        conf.eval_grad_func,
+        conf.eval_answer_func,
+    )
+    save_json(faith_metric_results_train_eval, ps_dir, "faith_metric_results_train_eval")
+    save_json(faith_metrics_train_eval, ps_dir, "faith_metrics_train_eval")
+    save_json(faith_metric_results_test_eval, ps_dir, "faith_metric_results_test_eval")
+    save_json(faith_metrics_test_eval, ps_dir, "faith_metrics_test_eval")
+
+
 # ## Equivalence Tests
 
-# In[29]:
+# In[ ]:
 
 
-from typing import Callable, Dict, Tuple, Union, Optional, Any, Literal, NamedTuple
-import math
-from enum import Enum
-
-import torch 
-import numpy as np
-from scipy.stats import binom, beta
-
-import matplotlib.pyplot as plt
-
-from auto_circuit.data import PromptDataLoader
-from auto_circuit.prune import run_circuits
-from auto_circuit.types import (
-    CircuitOutputs, 
-    BatchKey,
-    BatchOutputs,
-    PruneScores,
-    PatchType, 
-    AblationType,
-)
-from auto_circuit.utils.patchable_model import PatchableModel
-from auto_circuit.utils.custom_tqdm import tqdm
-
-from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, get_score_func
-
-class Side(Enum): 
-    LEFT = "left"
-    RIGHT = "right"
-    NONE = "none"
-
-def compute_num_C_gt_M(
-    circ_out: CircuitOutputs, 
-    model_out: CircuitOutputs, 
-    dataloader: PromptDataLoader, 
-    grad_function: GradFunc,
-    answer_function: AnswerFunc,
-) -> tuple[int, int, torch.Tensor, torch.Tensor]:
-    # compute number of samples with ablated C > M
-    score_func = get_score_func(grad_function, answer_function)
-    num_ablated_C_gt_M = 0
-    n = 0
-    circ_scores = []
-    model_scores = []
-    for batch in dataloader:
-        bs = batch.clean.size(0)
-        circ_out_batch = circ_out[batch.key]
-        model_out_batch = model_out[batch.key]
-        circ_score = score_func(circ_out_batch, batch)
-        model_score = score_func(model_out_batch, batch)
-        num_ablated_C_gt_M += torch.sum(circ_score > model_score).item()
-        n += bs
-        circ_scores.append(circ_score)
-        model_scores.append(model_score)
-    return num_ablated_C_gt_M, n, torch.cat(circ_scores), torch.cat(model_scores)
-
-def equiv_test(
-    k: int, 
-    n: int, 
-    alpha: float = 0.05, 
-    epsilon: float = 0.1, 
-    null_equiv: bool=True
-) -> tuple[bool, float]:
-    # if null equiv, run standard two-tailed test from paper
-    if null_equiv:
-        theta = 1 / 2 + epsilon
-        left_tail = binom.cdf(min(n-k, k), n, theta)
-        right_tail = 1 - binom.cdf(max(n-k, k), n, theta)
-        p_value = left_tail + right_tail
-        reject_null = p_value < alpha 
-    else: 
-        # run two one-tailed tests (TOTS)
-        # assume p = 1/2 + epsilon
-        # compute probability of <= k successes given p 
-        left_tail = binom.cdf(k, n, 1 / 2 + epsilon)
-        # then assume p = 1/2 - epsilon
-        # compute probability of >= k successes given p
-        right_tail = 1 - binom.cdf(k, n, 1 / 2 - epsilon)
-        reject_null = left_tail < alpha and right_tail < alpha
-    return bool(reject_null), left_tail, right_tail
-
-
-
-# def bernoulli_range_test(
-#     K,
-#     N,
-#     eps=0.1,
-#     a=[1,1],
-#     alpha=0.5
-# ):
-#     #Inputs:
-#     #  K: number of successes
-#     #  N: number of trials
-#     #  eps: faithfulness threshold
-#     #  a: beta prior coefficients on pi
-#     #  alpha: rejection threshold  
-#     #Outputs: 
-#     #  p(0.5-eps <= pi <= 0.5+eps | N, K, a)
-#     #  p(0.5-eps <= pi <= 0.5+eps | N, K, a)<1-alpha
-
-#     p_piK     = beta(N-K+a[0],K+a[1])
-#     p_between = p_piK.cdf(0.5+eps) - p_piK.cdf(0.5-eps)
-#     return(p_between<1-alpha, p_between)
-
-class EquivResult(NamedTuple):
-    num_ablated_C_gt_M: int
-    n: int
-    null_equiv: bool
-    reject_null: bool
-    left_tail: float
-    right_tail: float
-    circ_scores: list[float]
-    model_scores: list[float]
-
-def equiv_tests(
-    model: PatchableModel, 
-    dataloader: PromptDataLoader,
-    prune_scores: PruneScores,
-    grad_function: GradFunc,
-    answer_function: AnswerFunc,
-    ablation_type: AblationType,
-    patch_type: PatchType = PatchType.TREE_PATCH,
-    edge_counts: Optional[list[int]] = None,
-    thresholds: Optional[list[float]] = None,
-    model_out: Optional[BatchOutputs] = None,
-    circuit_outs: Optional[CircuitOutputs] = None,
-    null_equiv: bool = True,
-    alpha: float = 0.05,
-    epsilon: float = 0.1,
-) -> Dict[int, EquivResult]:
-
-    # circuit out
-    if circuit_outs is None:
-        circuit_outs = run_circuits(
-            model=model, 
-            dataloader=dataloader,
-            test_edge_counts=edge_counts,
-            thresholds=thresholds,
-            prune_scores=prune_scores,
-            patch_type=patch_type,
-            ablation_type=ablation_type,
-            reverse_clean_corrupt=False,
-        )
-    
-    # model out
-    if model_out is None:
-        model_out = {
-            batch.key: model(batch.clean)[model.out_slice] for batch in dataloader
-        }
-    
-    # run statitiscal tests for each edge count
-    test_results = {}
-    for edge_count, circuit_out in circuit_outs.items():
-        num_ablated_C_gt_M, n, circ_scores, model_scores = compute_num_C_gt_M(
-            circuit_out, model_out, dataloader, grad_function, answer_function
-        )
-        reject_nul, left_tail, right_tail = equiv_test(
-            num_ablated_C_gt_M, n, alpha, epsilon, null_equiv=null_equiv
-        )
-        test_results[edge_count] = EquivResult(
-            num_ablated_C_gt_M, 
-            n, 
-            null_equiv=null_equiv,
-            reject_null=reject_nul,
-            left_tail=left_tail,
-            right_tail=right_tail,
-            circ_scores=circ_scores.detach().cpu().numpy().tolist(), 
-            model_scores=model_scores.detach().cpu().numpy().tolist()
-        )
-    return test_results
-
-
-# In[30]:
-
-
+use_eval_metrics = conf.answer_func in DIV_ANSWER_FUNCS
 equiv_test_results_train = equiv_tests(
     model=task.model, 
     dataloader=task.train_loader,
     prune_scores=prune_scores,
-    grad_function=conf.grad_func,
-    answer_function=conf.answer_func,
+    grad_func=conf.grad_func if not use_eval_metrics else conf.eval_grad_func,
+    answer_func=conf.answer_func if not use_eval_metrics else conf.eval_answer_func,
     ablation_type=conf.ablation_type,
     model_out=model_out_train,
     circuit_outs=circuit_outs_train,
@@ -953,8 +799,8 @@ equiv_test_results_test = equiv_tests(
     model=task.model, 
     dataloader=task.test_loader,
     prune_scores=prune_scores,
-    grad_function=conf.grad_func,
-    answer_function=conf.answer_func,
+    grad_func=conf.grad_func if not use_eval_metrics else conf.eval_grad_func,
+    answer_func=conf.answer_func if not use_eval_metrics else conf.eval_answer_func,
     ablation_type=conf.ablation_type,
     model_out=model_out_test,
     circuit_outs=circuit_outs_test,
@@ -971,7 +817,7 @@ save_json(equiv_test_results_test, ps_dir, "equiv_test_results_test")
 
 # ## Plot % loss recovered and Equiv Test Results Along Frac Edges / Frac Prune Scores
 
-# In[31]:
+# In[26]:
 
 
 import matplotlib.pyplot as plt
@@ -981,13 +827,12 @@ from fractions import Fraction
 def plot_frac_loss_recovered_and_equiv_test_results(
     faith_metric_results: Dict[int, Dict[str, float]], 
     equiv_test_results: Dict[int, NamedTuple],
-    fracs: list[float],
     title: str, 
     null_good: bool = True,
     x_label: str = "Edges"
 ):
     n_edges = list(faith_metric_results.keys())
-    fracs = [float(frac) for frac in reversed(fracs)]  # Keep as float for accurate positioning
+    fracs = [n_edge / task.model.n_edges for n_edge in n_edges]
     frac_loss_recovered = [faith_metric_results[n_edge]["frac_mean_diff_recovered"] for n_edge in n_edges]
     reject_null = [result.reject_null for result in equiv_test_results.values()]
 
@@ -1012,12 +857,12 @@ def plot_frac_loss_recovered_and_equiv_test_results(
     ax.axhline(0.95, color='r', linestyle='--')
 
     # Set x-axis ticks and labels
-    x_ticks = np.arange(0, 0.6, 0.1)
+    x_ticks = np.arange(0, 1.0, 0.1)
     ax.set_xticks(x_ticks)
     ax.set_xticklabels([f'{x:.1f}' for x in x_ticks])
 
     # Set x-axis limits
-    ax.set_xlim(0, 0.5)
+    ax.set_xlim(0, 1.0)
 
     # Add legend
     ax.scatter([], [], color=null_reject_color, label='Null Rejected', s=100)
@@ -1030,13 +875,13 @@ def plot_frac_loss_recovered_and_equiv_test_results(
     return fig, ax
 
 
-# In[32]:
+# In[ ]:
 
 
+# TODO: figure out why this plotting is off
 fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
-    faith_metric_results_train, 
+    faith_metric_results_train if not use_eval_metrics else faith_metric_results_train_eval, 
     equiv_test_results_train,
-    conf.fracs,
     title="(Train) Fraction of Loss Recovered and Equiv Test Results",
     null_good=False,
     x_label="Edges" if not conf.prune_score_thresh else "Prune Scores"
@@ -1044,13 +889,12 @@ fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
 fig.savefig(edge_dir / "frac_loss_recovered_and_equiv_test_results_train.png")
 
 
-# In[33]:
+# In[ ]:
 
 
 fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
-    faith_metric_results_test, 
+    faith_metric_results_test if not use_eval_metrics else faith_metric_results_test_eval, 
     equiv_test_results_test,
-    conf.fracs,
     title="(Test) Fraction of Loss Recovered and Equiv Test Results",
     null_good=False,
     x_label="Edges" if not conf.prune_score_thresh else "Prune Scores"
@@ -1058,17 +902,24 @@ fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
 fig.savefig(edge_dir / "frac_loss_recovered_and_equiv_test_results_test.png")
 
 
-# # Minimality of Smallest Circuit Rejecting Non-Equivalence with %loss recovered > 0.95
+# # Minimality of Smallest Circuit with %loss recovered > 0.95
 
 # ## Find Smallest Equivalent Circuit
 
-# In[35]:
+# In[61]:
+
+
+flat_ps = flat_prune_scores_ordered(prune_scores, order=prune_scores.keys())
+
+
+# In[ ]:
 
 
 # find smallest equiv circuit on training distribution
 edge_counts_equiv_idx = [
     i for i, (k, v) in enumerate(equiv_test_results_train.items())
-    if v.reject_null and faith_metric_results_train[k]['frac_mean_diff_recovered'] > 0.95
+    if faith_metric_results_train[k]['frac_mean_diff_recovered'] > 0.95 
+    #and v.reject_null 
 ]
 n_edges_min_equi_idx = min(edge_counts_equiv_idx) if edge_counts_equiv_idx else -1
 n_edges_min_equiv = circ_edges[n_edges_min_equi_idx]
@@ -1108,7 +959,7 @@ if test_smallest:
 # 
 # Note: Seems like there is some leakage, not exactly sure why, but I guess its fine, not using this anyway
 
-# In[37]:
+# In[ ]:
 
 
 if test_smallest:
@@ -1139,7 +990,7 @@ if test_smallest:
 
 # ### Verify Pruned Smallest Circuit Still Equivalent and achieves >95% loss recovered
 
-# In[38]:
+# In[ ]:
 
 
 if test_smallest:
@@ -1171,12 +1022,12 @@ if test_smallest:
     used_edges_out = run_circuit_from_mask(used_edges_mask, task.train_loader)
 
 
-# In[39]:
+# In[ ]:
 
 
 if test_smallest:
 # compute faithfulness metrics 
-    faith_metric_results_used_edges, faith_metrics_used_edges= compute_faith_metrics(
+    faith_metric_results_used_edges, faith_metrics_used_edges = compute_faith_metrics(
         task.train_loader,
         model_out_train,
         ablated_out_train,
@@ -1188,7 +1039,7 @@ if test_smallest:
     save_json(faith_metric_results_used_edges, ps_dir, "faith_metric_results_used_edges")
 
 
-# In[40]:
+# In[ ]:
 
 
 # run equiv tests on used edges
@@ -1197,8 +1048,8 @@ if test_smallest:
         model=task.model, 
         dataloader=task.train_loader,
         prune_scores=used_edges_mask,
-        grad_function=conf.grad_func,
-        answer_function=conf.answer_func,
+        grad_func=conf.grad_func,
+        answer_func=conf.answer_func,
         ablation_type=conf.ablation_type,
         model_out=model_out_train,
         circuit_outs=used_edges_out,
@@ -1221,7 +1072,7 @@ run_min_test = test_smallest
 
 # ### Run Circuits with Each Edge Ablated 
 
-# In[42]:
+# In[ ]:
 
 
 if run_min_test:
@@ -1246,7 +1097,7 @@ if run_min_test:
 
 # ### Compute Change in %loss recovered
 
-# In[43]:
+# In[ ]:
 
 
 if run_min_test:
@@ -1274,7 +1125,7 @@ if run_min_test:
     save_json({edge_name(k): v for k, v in edge_faith_metrics_test.items()}, ps_dir, "edge_faith_metrics_test")
 
 
-# In[44]:
+# In[ ]:
 
 
 if run_min_test:
@@ -1315,7 +1166,7 @@ if run_min_test:
     graph = SeqGraph(task.model.edges, token=task.token_circuit, attn_only=task.model.cfg.attn_only)
 
 
-# In[46]:
+# In[ ]:
 
 
 if run_min_test:
@@ -1324,7 +1175,7 @@ if run_min_test:
     visualize_graph(graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, column_width=5, figsize=(36, 24))
 
 
-# In[47]:
+# In[ ]:
 
 
 # plot circuit graph
@@ -1334,7 +1185,7 @@ if run_min_test:
     visualize_graph(circ_graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, column_width=10, figsize=(72, 24))
 
 
-# In[48]:
+# In[ ]:
 
 
 # sample paths from complement for each data instance
@@ -1349,7 +1200,7 @@ if run_min_test:
     novel_edge_paths = [[edge for edge in path if edge not in edges_set] for path in sampled_paths]
 
 
-# In[49]:
+# In[ ]:
 
 
 if run_min_test:
@@ -1367,7 +1218,7 @@ if run_min_test:
     visualize_graph(ex_inflated_graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, edge_colors=edge_colors)
 
 
-# In[50]:
+# In[ ]:
 
 
 # sample paths to remove 
@@ -1383,7 +1234,7 @@ if run_min_test:
     visualize_graph(ex_inflated_graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, edge_colors=edge_colors)
 
 
-# In[51]:
+# In[ ]:
 
 
 if run_min_test:
@@ -1426,12 +1277,13 @@ if run_min_test:
             outs_2=circuit_outs_train[n_edges_min_equiv],
             grad_func=conf.grad_func,
             answer_func=conf.answer_func,
+            model_outs=model_out_train,
             device=task.device
         )
         ablated_edge_mean_diffs[edge] = t.cat(ablated_diffs).mean().item()
 
 
-# In[53]:
+# In[ ]:
 
 
 if run_min_test:
@@ -1446,7 +1298,7 @@ if run_min_test:
         )
 
 
-# In[54]:
+# In[ ]:
 
 
 if run_min_test:
@@ -1477,7 +1329,7 @@ if run_min_test:
     fig.tight_layout()
 
 
-# In[55]:
+# In[ ]:
 
 
 if run_min_test:
@@ -1506,6 +1358,7 @@ if run_min_test:
         answer_func=conf.answer_func,
         ablation_type=conf.ablation_type,
         token=task.token_circuit,
+        model_outs=model_out_test,
         n_paths=conf.n_paths,
         null_minimal=False, 
         bonferonni=False, 
@@ -1574,7 +1427,7 @@ if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func):
 
 # ## % Loss Recovered of Complement Model
 
-# In[59]:
+# In[ ]:
 
 
 # get complement outs
@@ -1599,7 +1452,7 @@ complement_outs_test: CircuitOutputs = run_circuits(
 )
 
 
-# In[60]:
+# In[ ]:
 
 
 # get faithfulness metrics of complement
@@ -1629,7 +1482,7 @@ save_json(faith_metric_results_c_test, ps_dir, "faith_metric_results_c_test")
 save_json(faith_metrics_c_test, ps_dir, "faith_metrics_c_test")
 
 
-# In[61]:
+# In[ ]:
 
 
 [(k, v['frac_mean_diff_recovered']) for k, v in faith_metric_results_c_train.items()]
@@ -1672,7 +1525,7 @@ save_json(faith_metrics_c_test, ps_dir, "faith_metrics_c_test")
 from auto_circuit_tests.hypo_tests.indep_test import independence_tests
 
 
-# In[63]:
+# In[ ]:
 
 
 indep_results_train = independence_tests(
@@ -1680,7 +1533,7 @@ indep_results_train = independence_tests(
     dataloader=task.train_loader, 
     prune_scores=prune_scores, 
     grad_function=conf.grad_func,
-    answer_function=conf.answer_func,
+    answer_func=conf.answer_func,
     ablation_type=conf.ablation_type,
     model_out=model_out_train,
     complement_circuit_outs=complement_outs_train,
@@ -1690,21 +1543,21 @@ indep_results_train = independence_tests(
 save_json(indep_results_train, ps_dir, "indep_results_train")
 
 
-# In[64]:
+# In[ ]:
 
 
 [(k, (v.p_value, faith_metric_results_c_train[k]['frac_mean_diff_recovered'])) for k, v in indep_results_train.items()]
 
 
-# In[65]:
+# In[ ]:
 
 
 indep_results_test = independence_tests(
     model=task.model, 
     dataloader=task.test_loader, 
     prune_scores=prune_scores, 
-    grad_function=conf.grad_func,
-    answer_function=conf.answer_func,
+    grad_func=conf.grad_func,
+    answer_func=conf.answer_func,
     ablation_type=conf.ablation_type,
     model_out=model_out_test,
     complement_circuit_outs=complement_outs_test,
@@ -1715,14 +1568,13 @@ indep_results_test = independence_tests(
 save_json(indep_results_test, ps_dir, "indep_results_test")
 
 
-# In[66]:
+# In[ ]:
 
 
 # plot % loss recovered and indep test results
 fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
     faith_metric_results_c_train, 
     indep_results_train,
-    conf.fracs,
     title="(Train) Fraction of Loss Recovered by Complement and Independence Test Results",
     null_good=True,
     x_label="Edges" if not conf.prune_score_thresh else "Prune Scores"
@@ -1730,14 +1582,13 @@ fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
 fig.savefig(edge_dir / "frac_loss_recovered_and_indep_test_results_train.png")
 
 
-# In[67]:
+# In[ ]:
 
 
 # plot % loss recovered and indep test results
 fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
     faith_metric_results_c_test, 
     indep_results_test,
-    conf.fracs,
     title="(Test) Fraction of Loss Recovered by Complement and Independence Test Results",
     null_good=True,
     x_label="Edges" if not conf.prune_score_thresh else "Prune Scores"
@@ -1747,7 +1598,7 @@ fig.savefig(edge_dir / "frac_loss_recovered_and_indep_test_results_test.png")
 
 # ### Run Independence Test on True Edges
 
-# In[68]:
+# In[ ]:
 
 
 if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func):

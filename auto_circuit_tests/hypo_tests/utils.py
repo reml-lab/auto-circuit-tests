@@ -2,18 +2,6 @@ from typing import Dict, Optional, NamedTuple, Literal, Any
 import torch
 import numpy as np
 from auto_circuit.types import SrcNode, DestNode, Edge
-from auto_circuit.data import PromptDataLoader, PromptPairBatch
-from auto_circuit.prune import run_circuits
-from auto_circuit.types import (
-    CircuitOutputs, 
-    BatchKey,
-    BatchOutputs,
-    PruneScores,
-    PatchType, 
-    AblationType,
-)
-from auto_circuit.utils.patchable_model import PatchableModel
-from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, get_score_func
 
 def join_values(d: Dict[Any, Dict]):
     return {k: v for sub_d in d.values() for k, v in sub_d.items()}

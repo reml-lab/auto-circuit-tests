@@ -102,6 +102,7 @@ def get_exp_dir(
     ig_samples: int, 
     layerwise: bool,
     act_patch: bool,
+    acdc: bool,
     alpha: float,
     epsilon: float,
     q_star: float, 
@@ -113,8 +114,8 @@ def get_exp_dir(
     task_dir = out_dir / task_key.replace(' ', '_')
     ablation_dir = task_dir / ablation_type.name
     out_answer_dir = ablation_dir / f"{grad_func.name}_{answer_func.name}"
-    ps_dir = out_answer_dir / (f"{ig_samples}_{layerwise}" if not act_patch else "act_patch")
-    edge_dir = ps_dir / "prune_scores" if prune_score_thresh else ps_dir / "edges"
+    ps_dir = out_answer_dir / ("acdc" if acdc else ("act_patch" if act_patch else f"{ig_samples}_{layerwise}"))
+    edge_dir = ps_dir / ("tao" if acdc else ("prune_scores" if prune_score_thresh else "edges"))
     exp_dir = edge_dir / f"{alpha}_{epsilon}_{q_star}"
     return task_dir, ablation_dir, out_answer_dir, ps_dir, edge_dir, exp_dir
 

@@ -1,4 +1,5 @@
 from typing import Callable, Dict, Tuple, Union, Optional, Any, Literal, NamedTuple
+from functools import partial
 
 import torch 
 import numpy as np
@@ -12,7 +13,7 @@ from auto_circuit.types import PruneScores, BatchOutputs, CircuitOutputs, PatchT
 from auto_circuit.utils.patchable_model import PatchableModel
 from auto_circuit.utils.custom_tqdm import tqdm
 
-from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, get_score_func
+from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, compute_scores
 # from auto_circuit_tests.hypo_tests.equiv_test import equiv_test
 
 
@@ -56,8 +57,8 @@ def independence_tests(
     model: PatchableModel,
     dataloader: PromptDataLoader,
     prune_scores: PruneScores,
-    grad_function: GradFunc,
-    answer_function: AnswerFunc,
+    grad_func: GradFunc,
+    answer_func: AnswerFunc,
     ablation_type: AblationType,
     edge_counts: Optional[list[int]] = None,
     thresholds: Optional[list[float]] = None,
@@ -86,14 +87,16 @@ def independence_tests(
             model_out[batch.key] = model(batch.clean)[model.out_slice]
 
     # compute scores
-    score_func = get_score_func(grad_function, answer_function)
+    score_func = partial(compute_scores, grad_func=grad_func, answer_func=answer_func)
     test_results = {}
     for edge_count, comp_circuit_out in tqdm(complement_circuit_outs.items()):
         comp_circuit_scores = []
         model_scores = []
         for batch in dataloader:
-            model_scores.append(score_func(model_out[batch.key], batch).cpu()) 
-            comp_circuit_scores.append(score_func(comp_circuit_out[batch.key], batch).cpu())
+            model_out_batch = model_out[batch.key]
+            circ_out_batch = comp_circuit_out[batch.key]
+            model_scores.append(score_func(model_out_batch, batch, model_out_batch).cpu()) 
+            comp_circuit_scores.append(score_func(circ_out_batch, batch, model_out_batch).cpu())
         model_scores = torch.cat(model_scores)[:, None]
         comp_circuit_scores = torch.cat(comp_circuit_scores)[:, None]
 

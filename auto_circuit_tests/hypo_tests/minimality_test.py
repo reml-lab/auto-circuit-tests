@@ -1,6 +1,7 @@
 from typing import Callable, Dict, Tuple, Union, Optional, Any, Literal, NamedTuple
 import random
 from copy import deepcopy
+from functools import partial
 
 import torch as t
 import numpy as np
@@ -22,7 +23,7 @@ from auto_circuit.types import (
 from auto_circuit.utils.patchable_model import PatchableModel
 from auto_circuit.utils.custom_tqdm import tqdm
 
-from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, get_score_func
+from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, compute_scores, DIV_ANSWER_FUNCS
 from auto_circuit_tests.edge_graph import SeqGraph, sample_paths 
 from auto_circuit_tests.hypo_tests.utils import join_values, remove_el
 from auto_circuit_tests.utils.auto_circuit_utils import run_circuit_with_edge_ablated
@@ -53,14 +54,16 @@ def score_diffs(
     outs_2: BatchOutputs,
     grad_func: GradFunc,
     answer_func: AnswerFunc,
+    model_outs: Optional[BatchOutputs] = None,
     device: str = t.device('cuda')
 ) -> list[t.Tensor]:
     diffs = []
-    score_func = get_score_func(grad_func, answer_func)
+    score_func = partial(compute_scores, grad_func=grad_func, answer_func=answer_func)
     for batch in dataloader:
         batch: PromptPairBatch
-        score_1 = score_func(outs_1[batch.key].to(device), batch)
-        score_2 = score_func(outs_2[batch.key].to(device), batch)
+        model_outs_batch = model_outs[batch.key].to(device) if model_outs is not None else None
+        score_1 = score_func(outs_1[batch.key].to(device), batch, model_outs_batch)
+        score_2 = score_func(outs_2[batch.key].to(device), batch, model_outs_batch)
         diffs.append(t.abs(score_1 - score_2).detach().cpu())
     return diffs
     
@@ -161,6 +164,7 @@ def minimality_test(
     token: bool,
     circuit_outs: Optional[BatchOutputs]=None,
     edges_outs: Optional[Dict[Edge, BatchOutputs]]=None, 
+    model_outs: Optional[BatchOutputs]=None,
     inflated_outs: Optional[CircuitOutputs]=None,
     ablated_outs: Optional[CircuitOutputs]=None,
     n_paths: Optional[int] = None,
@@ -175,6 +179,13 @@ def minimality_test(
     assert (inflated_outs is None) == (ablated_outs is None) == (n_paths is not None)
     if bonferonni:
         alpha = alpha / len(edges)
+    
+    # model outs (for div metrics)
+    if answer_func in DIV_ANSWER_FUNCS and model_outs is None:
+        model_outs = {
+            batch.key: model(batch.clean)[model.out_slice]
+            for batch in dataloader
+        }
 
     # inflated ablated 
     if inflated_outs is None:
