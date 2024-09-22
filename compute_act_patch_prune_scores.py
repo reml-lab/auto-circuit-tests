@@ -164,6 +164,7 @@ file_postfix = '' if conf.edge_start is None else f'_{conf.edge_start}_{conf.edg
 for (grad_func, answer_func) in conf.out_ans_funcs:
     score_func_name = f'{grad_func.name}_{answer_func.name}'
     ps_path = ablation_dir / score_func_name / f'act_patch_prune_scores{file_postfix}.pt'
+    ps_path.parent.mkdir(parents=True, exist_ok=True)
     print(ps_path)
     t.save(prune_score_dict[(grad_func, answer_func)], ps_path)
 
