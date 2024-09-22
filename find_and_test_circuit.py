@@ -142,7 +142,7 @@ from auto_circuit_tests.utils.utils import get_exp_dir
 # 3. for IOI Token, use ACDC++ (combine attribution patching and ACDC) so we can tractably run ACDC
 
 
-# In[8]:
+# In[6]:
 
 
 # config class
@@ -186,7 +186,7 @@ class Config:
                 self.eval_answer_func = AnswerFunc.MAX_DIFF
 
 
-# In[9]:
+# In[7]:
 
 
 # initialize config 
@@ -198,7 +198,7 @@ if not is_notebook():
     conf = Config(**conf_dict)
 
 
-# In[10]:
+# In[8]:
 
 
 # handle directories
@@ -224,6 +224,7 @@ exp_dir.mkdir(parents=True, exist_ok=True)
 
 # initialize task
 task = TASK_DICT[conf.task]
+task.shuffle = False
 task.init_task()
 
 
@@ -258,10 +259,10 @@ if conf.acdc:
 
 
 # load from cache if exists 
-act_ps_path = out_answer_dir / "act_patch_prune_scores.pkl"
+act_ps_path = out_answer_dir / "act_patch_prune_scores.pt"
 if act_ps_path.exists():
     act_prune_scores = torch.load(act_ps_path)
-    act_prune_scores = {mod_name: -score for mod_name, score in act_prune_scores.items()} # negative b/c high score should imply large drop in performance
+    act_prune_scores = {mod_name: score for mod_name, score in act_prune_scores.items()} # negative b/c high score should imply large drop in performance
 else:
     act_prune_scores = None
 
@@ -278,7 +279,7 @@ if conf.act_patch and act_prune_scores is None:
 
 if not conf.act_patch:
     attr_ps_name = "attrib_patch_prune_scores"
-    attr_ps_path = (ps_dir / attr_ps_name).with_suffix(".pkl")
+    attr_ps_path = (ps_dir / attr_ps_name).with_suffix(".pt")
     if (attr_ps_path).exists():
         attr_prune_scores = torch.load(attr_ps_path)
     else: 
@@ -580,7 +581,7 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # Constructing circuits from prune scores using either edge or fraction of prune score thresholds
 
-# In[14]:
+# In[16]:
 
 
 # set prune scores
@@ -741,13 +742,7 @@ save_json(faith_metric_results_test, ps_dir, "faith_metric_results_test")
 save_json(faith_metrics_test, ps_dir, "faith_metrics_test")
 
 
-# In[23]:
-
-
-conf.eval_answer_func
-
-
-# In[24]:
+# In[22]:
 
 
 # faith metrics eval 
@@ -817,7 +812,7 @@ save_json(equiv_test_results_test, ps_dir, "equiv_test_results_test")
 
 # ## Plot % loss recovered and Equiv Test Results Along Frac Edges / Frac Prune Scores
 
-# In[26]:
+# In[24]:
 
 
 import matplotlib.pyplot as plt

@@ -12,7 +12,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from transformer_lens import HookedTransformer
 
-from auto_circuit.types import BatchKey, CircuitOutputs, BatchOutputs, PatchWrapper
+from auto_circuit.types import BatchKey, CircuitOutputs, BatchOutputs, PatchWrapper 
+from auto_circuit.tasks import Task
 from auto_circuit.utils.custom_tqdm import tqdm
 from auto_circuit.utils.patchable_model import PatchableModel
 from auto_circuit.data import PromptDataset, PromptDataLoader, PromptPair, PromptPairBatch
@@ -32,6 +33,16 @@ def edge_key(edge: Edge):
 
 def edge_name(edge: Edge):
     return f"{edge.name}{'_' + str(edge.seq_idx) if edge.seq_idx is not None else ''}"
+
+def edge_order(edge: Edge) -> Tuple:
+    return edge.seq_idx, edge.src.src_idx, edge.dest.layer, edge.dest.head_idx
+
+def sort_edges(edges: List[Edge]) -> List[Edge]:
+    return sorted(edges, key=edge_order)
+
+def set_task_to_single_batch(task: Task): 
+    task.batch_size = task.batch_size * task.batch_count
+    task.batch_count = 1
 
 def run_fully_ablated_model(
     model: PatchableModel, 
