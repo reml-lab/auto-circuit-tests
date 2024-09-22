@@ -51,16 +51,18 @@ class Config:
     ablation_type: AblationType = AblationType.RESAMPLE
     grad_funcs: List[GradFunc] = field(default_factory=lambda: [GradFunc.LOGIT, GradFunc.LOGPROB])
     answer_funcs: List[AnswerFunc] = field(default_factory = lambda: [AnswerFunc.MAX_DIFF, AnswerFunc.AVG_VAL, AnswerFunc.KL_DIV, AnswerFunc.JS_DIV])
-    out_ans_funcs: Optional[List[Tuple[GradFunc, AnswerFunc]]] = None
     clean_corrupt: Optional[str] = None
     edge_start: Optional[int] = None
     edge_range: Optional[int] = None
 
 def conf_post_init(conf: Config):
     conf.clean_corrupt = "corrupt" if conf.ablation_type == AblationType.RESAMPLE else None
+
+
+def get_out_ans_funcs(conf: Config) -> List[Tuple[GradFunc, AnswerFunc]]:
     non_div_ans_funcs = [f for f in conf.answer_funcs if f not in DIV_ANSWER_FUNCS]
     div_ans_funcs = [f for f in conf.answer_funcs if f in DIV_ANSWER_FUNCS]
-    conf.out_ans_funcs = list(itertools.product(conf.grad_funcs, non_div_ans_funcs)) + [(GradFunc.LOGPROB, f) for f in div_ans_funcs]
+    return list(itertools.product(conf.grad_funcs, non_div_ans_funcs)) + [(GradFunc.LOGPROB, f) for f in div_ans_funcs]
 
 
 # In[4]:
@@ -71,6 +73,7 @@ if not is_notebook():
     import sys 
     conf: Config = OmegaConf.merge(OmegaConf.structured(conf), OmegaConf.from_cli(sys.argv[1:]))
 conf_post_init(conf)
+out_ans_funcs = get_out_ans_funcs(conf)
 
 
 # In[5]:
@@ -97,12 +100,12 @@ task.init_task()
 # compute and store act patch scores for all combinations of grad_func and answer_func
 prune_score_dict: Dict[Tuple[GradFunc, AnswerFunc], PruneScores] = {
     (grad_func, answer_func): task.model.new_prune_scores()
-    for grad_func, answer_func in conf.out_ans_funcs
+    for grad_func, answer_func in out_ans_funcs
 }
 
 full_model_score_dict: Dict[Tuple[GradFunc, AnswerFunc], PruneScores] = {
     (grad_func, answer_func): task.model.new_prune_scores()
-    for grad_func, answer_func in conf.out_ans_funcs
+    for grad_func, answer_func in out_ans_funcs
 }
 
 
@@ -134,7 +137,7 @@ with t.no_grad():
     for batch in tqdm(task.train_loader, desc="Full Model Loss"):
         logits = task.model(batch.clean)[task.model.out_slice]
         model_outs[batch.key] = logits.cpu()
-        for (grad_func, answer_func) in conf.out_ans_funcs:
+        for (grad_func, answer_func) in out_ans_funcs:
             if answer_func in DIV_ANSWER_FUNCS:
                 continue
             score = -compute_loss(task.model, batch, grad_func.value, answer_func.value, logits=logits)
@@ -150,7 +153,7 @@ with t.no_grad():
             patch_src_outs = src_outs[batch.key].clone().detach()
             with patch_mode(task.model, patch_src_outs, edges=[edge]):
                 logits = task.model(batch.clean)[task.model.out_slice]
-            for (grad_func, answer_func) in conf.out_ans_funcs:
+            for (grad_func, answer_func) in out_ans_funcs:
                 score = -compute_loss(task.model, batch, grad_func.value, answer_func.value, logits=logits, clean_out=model_outs[batch.key].to(task.device))
                 full_model_score = full_model_score_dict[(grad_func, answer_func)][edge.dest.module_name][edge.patch_idx]
                 prune_score_dict[(grad_func, answer_func)][edge.dest.module_name][edge.patch_idx] = full_model_score - score.sum().item()
@@ -161,7 +164,7 @@ with t.no_grad():
 
 # save out to directories 
 file_postfix = '' if conf.edge_start is None else f'_{conf.edge_start}_{conf.edge_range}'
-for (grad_func, answer_func) in conf.out_ans_funcs:
+for (grad_func, answer_func) in out_ans_funcs:
     score_func_name = f'{grad_func.name}_{answer_func.name}'
     ps_path = ablation_dir / score_func_name / f'act_patch_prune_scores{file_postfix}.pt'
     ps_path.parent.mkdir(parents=True, exist_ok=True)
