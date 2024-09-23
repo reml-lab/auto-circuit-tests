@@ -19,7 +19,7 @@ def is_notebook() -> bool:
 
 import os
 if is_notebook():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "5" #"1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "4" #"1"
     # os.environ['CUDA_LAUNCH_BLOCKING']="1"
     # os.environ['TORCH_USE_CUDA_DSA'] = "1"
 
@@ -76,6 +76,7 @@ from auto_circuit.prune_algos.ACDC import acdc_prune_scores
 from auto_circuit.visualize import draw_seq_graph
 from auto_circuit.utils.custom_tqdm import tqdm
 from auto_circuit.utils.tensor_ops import desc_prune_scores
+from auto_circuit.utils.graph_utils import edge_counts_util
 
 from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, DIV_ANSWER_FUNCS
 # from auto_circuit_tests.faithful_metrics import FaithfulMetric
@@ -126,10 +127,6 @@ from auto_circuit_tests.utils.utils import get_exp_dir
 # In[4]:
 
 
-# ok what do I want to do? 
-# I want to equivalent equivalence and fraction of loss recovered for the current metric and other metrics
-# for minimality I'll just to the standard metric
-
 # so I think the mechanistic explanation for ACDC doing better is probably 
     # self-repair mechanisms are more prominant when ablating edges from the full model, but the 
     # self-repair stuff is discarded by ACDC (and thresholding by prune score), so you do need certain edges
@@ -151,14 +148,15 @@ from dataclasses import dataclass, field
 class Config: 
     task: str = "Docstring Component Circuit" # check how many edges in component circuit (probably do all but ioi toen)
     ablation_type: AblationType = AblationType.RESAMPLE
-    grad_func: GradFunc = GradFunc.LOGIT
-    answer_func: AnswerFunc = AnswerFunc.MAX_DIFF
+    grad_func: GradFunc = GradFunc.LOGPROB
+    answer_func: AnswerFunc = AnswerFunc.KL_DIV
     eval_grad_func: Optional[GradFunc] = None # TODO: used to evaluate faithfulness
     eval_answer_func: Optional[AnswerFunc] = None
     ig_samples: Optional[int] = None
     layerwise: bool = False
     act_patch: bool = True
     acdc: bool = False
+    keep_all_layer_0: bool = False
     edge_counts: EdgeCounts = EdgeCounts.LOGARITHMIC
     tao_bases: list[float] = field(default_factory=lambda: [1, 5])
     tao_exps: list[float] = field(default_factory=lambda: list(range(-5, -1)))
@@ -232,7 +230,7 @@ task.init_task()
 
 # ## ACDC Prune Scores
 
-# In[12]:
+# In[10]:
 
 
 if conf.acdc:
@@ -274,7 +272,7 @@ if conf.act_patch and act_prune_scores is None:
 
 # ##  Attribution Patching Prune Scores
 
-# In[ ]:
+# In[12]:
 
 
 if not conf.act_patch:
@@ -289,8 +287,8 @@ if not conf.act_patch:
             model=task.model, 
             dataloader=task.train_loader,
             official_edges=None,
-            grad_func=conf.grad_func.value, 
-            answer_func=conf.answer_func.value, #answer_func,
+            grad_function=conf.grad_func.value, 
+            answer_function=conf.answer_func.value, #answer_func,
             mask_val=0.0 if conf.ig_samples is None else None, 
             ablation_type=conf.ablation_type,
             integrated_grad_samples=conf.ig_samples, 
@@ -303,7 +301,7 @@ if not conf.act_patch:
 
 # ##  Compare Activation and Attribution Patching
 
-# In[192]:
+# In[13]:
 
 
 if not conf.act_patch:
@@ -315,7 +313,7 @@ if not conf.act_patch:
 
 # ### MSE
 
-# In[ ]:
+# In[14]:
 
 
 # mse and median se
@@ -342,7 +340,7 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # ### Spearman Rank Correlation
 
-# In[ ]:
+# In[15]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
@@ -363,7 +361,7 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # ### Plot Rank 
 
-# In[195]:
+# In[16]:
 
 
 # get rank for scores
@@ -376,7 +374,7 @@ if not conf.act_patch:
     min_0_rank, max_0_rank = act_prune_scores_0_rank.min().item(), act_prune_scores_0_rank.max().item()
 
 
-# In[ ]:
+# In[17]:
 
 
 if not conf.act_patch:
@@ -395,7 +393,7 @@ if not conf.act_patch:
     plt.savefig(ps_dir / "rank_corr.png")
 
 
-# In[ ]:
+# In[18]:
 
 
 # TODO: I think there must be a bug? 
@@ -421,7 +419,7 @@ if not conf.act_patch:
 
 # ### Compute Fraction of "Mis-Signed" Components
 
-# In[ ]:
+# In[19]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
@@ -431,11 +429,30 @@ if not conf.act_patch and act_prune_scores is not None:
     save_json({"frac_missigned": frac_missigned.item()}, ps_dir, "missigned")
 
 
+# ### Compute Fraction of Edges Recovered for Each Edge Threshold
+
+# In[20]:
+
+
+# for different edge thresholds, compute fraction of edges not included in top k
+if not conf.act_patch:
+    edge_counts = edge_counts_util(task.model.edges, conf.edge_counts, zero_edges=True)
+
+    frac_edges_recovered: Dict[int, float] = {}
+
+    for edge_count in edge_counts:
+        # get indicies where act_prune_scores_abs_rank >= task.n_edges - edge_count
+        act_indices = act_prune_scores_abs_rank >= task.model.n_edges - edge_count
+        frac_edges_recovered[edge_count] = (attr_prune_scores_abs_rank[act_indices] >= task.model.n_edges - edge_count).to(t.float).mean().item()
+
+    save_json(frac_edges_recovered, ps_dir, "frac_edges_recovered")
+
+
 # ### Parition by Dest Component
 # 
 # We partion by Dest B/c we expect difficulties to arise from estimating effects that route through non-linearities
 
-# In[199]:
+# In[21]:
 
 
 from auto_circuit_tests.edge_graph import NodeType
@@ -458,100 +475,99 @@ def mod_name_to_layer_and_node_type(mod_name: str) -> Tuple[int, NodeType]:
     return layer, node_type
 
 
-# In[200]:
+# In[22]:
 
 
-# TODO: divide edges into layer and destination component type (mlp, key, query, value)
-from auto_circuit_tests.edge_graph import NodeType, node_name_to_type
+if not conf.act_patch:
+    from auto_circuit_tests.edge_graph import NodeType
+    # compute ranking by flatten by order, including module name 
+    def prune_score_rankings_by_component(
+        prune_scores: PruneScores, 
+        prune_scores_rank: torch.Tensor, 
+        order: list[str]
+    ) -> dict[tuple[int, NodeType], list[int]]:
+        # collect mod_name ranking tuples
+        flat_mod_names = [] 
+        for mod_name in order:
+            flat_mod_names.extend([mod_name for _ in range(prune_scores[mod_name].numel())])
+        # get ranking by component type and layer
+        rank_by_component: dict[tuple[int, NodeType], list[int]] = defaultdict(list)
+        for mod_name, rank in zip(flat_mod_names, prune_scores_rank):
+            layer, node_type = mod_name_to_layer_and_node_type(mod_name)
+            rank_by_component[(layer, node_type)].append(rank)
+        return rank_by_component
 
-# compute ranking by flatten by order, including module name 
-
-def prune_score_rankings_by_component(
-    prune_scores: PruneScores, 
-    prune_scores_rank: torch.Tensor, 
-    order: list[str]
-) -> dict[tuple[int, NodeType], list[int]]:
-    # collect mod_name ranking tuples
-    flat_mod_names = [] 
-    for mod_name in order:
-        flat_mod_names.extend([mod_name for _ in range(prune_scores[mod_name].numel())])
-    # get ranking by component type and layer
-    rank_by_component: dict[tuple[int, NodeType], list[int]] = defaultdict(list)
-    for mod_name, rank in zip(flat_mod_names, prune_scores_rank):
-        layer, node_type = mod_name_to_layer_and_node_type(mod_name)
-        rank_by_component[(layer, node_type)].append(rank)
-    return rank_by_component
-
-act_rank_by_component = prune_score_rankings_by_component(act_prune_scores, act_prune_scores_abs_rank, order)
-attr_rank_by_component = prune_score_rankings_by_component(attr_prune_scores, attr_prune_scores_abs_rank, order)
+    act_rank_by_component = prune_score_rankings_by_component(act_prune_scores, act_prune_scores_abs_rank, order)
+    attr_rank_by_component = prune_score_rankings_by_component(attr_prune_scores, attr_prune_scores_abs_rank, order)
 
 
-# In[ ]:
+# In[23]:
 
 
-import matplotlib.pyplot as plt
-import numpy as np
+if not conf.act_patch:
+    import matplotlib.pyplot as plt
+    import numpy as np
 
-# plot ranks for each component type all in one figure
-n_layers = max([layer for layer, _ in act_rank_by_component.keys()])
-components = sorted(list(set([node_type for _, node_type in act_rank_by_component.keys()])), key=lambda x: x.value)
+    # plot ranks for each component type all in one figure
+    n_layers = max([layer for layer, _ in act_rank_by_component.keys()])
+    components = sorted(list(set([node_type for _, node_type in act_rank_by_component.keys()])), key=lambda x: x.value)
 
-# Create a 2D array to store the Axes objects
-axs = np.empty((len(components), n_layers + 1), dtype=object)
+    # Create a 2D array to store the Axes objects
+    axs = np.empty((len(components), n_layers + 1), dtype=object)
 
-# Create the figure without subplots initially
-fig = plt.figure(figsize=(3 * (n_layers+1), 3 * len(components)))
-
-
-rank_correlations: dict[tuple[int, NodeType], float] = {}
-for layer in range(0, n_layers + 1):
-    for i, node_type in enumerate(components):
-        act_ranks = act_rank_by_component[(layer, node_type)]
-        attr_ranks = attr_rank_by_component[(layer, node_type)]
-        
-        if len(act_ranks) == 0 and len(attr_ranks) == 0:
-            continue
-
-        # compute rank correlation
-        corr, p_value = stats.spearmanr(act_ranks, attr_ranks)
-        rank_correlations[(layer, node_type)] = corr
-        
-        # Create a subplot only if there's data to plot
-        ax = fig.add_subplot(len(components), (n_layers+1), (i * (n_layers+1)) + layer+1)
-        ax.scatter(act_ranks, attr_ranks, s=1)
-        # set title below scatter plot
-        ax.set_title(f"Correlation: {corr:.2f}", y=-0.20)
-
-        
-        # Store the Axes object in our 2D array
-        axs[i, layer - 1] = ax
-
-        # Add x-label at the top
-        if i == 0:
-            ax.xaxis.set_label_position('top')
-            ax.set_xlabel(f"Layer {layer}", fontweight='bold')
-        
-        # Add y-label on the left
-        if layer == 0 or node_type == NodeType.RESID_END:
-            ax.set_ylabel(str(node_type.name), fontweight='bold')
-
-# Remove empty spaces in the figure
-fig.tight_layout()
-# Adjust the spacing between subplots
-plt.subplots_adjust(wspace=0.3, hspace=0.3)
-
-# save figure
-
-plt.savefig(ps_dir / "rank_corr_by_component.png")
+    # Create the figure without subplots initially
+    fig = plt.figure(figsize=(3 * (n_layers+1), 3 * len(components)))
 
 
-# save rank correlations
-save_json({str(k): v for k, v in rank_correlations.items()}, ps_dir, "rank_cor_by_component")
+    rank_correlations: dict[tuple[int, NodeType], float] = {}
+    for layer in range(0, n_layers + 1):
+        for i, node_type in enumerate(components):
+            act_ranks = act_rank_by_component[(layer, node_type)]
+            attr_ranks = attr_rank_by_component[(layer, node_type)]
+            
+            if len(act_ranks) == 0 and len(attr_ranks) == 0:
+                continue
+
+            # compute rank correlation
+            corr, p_value = stats.spearmanr(act_ranks, attr_ranks)
+            rank_correlations[(layer, node_type)] = corr
+            
+            # Create a subplot only if there's data to plot
+            ax = fig.add_subplot(len(components), (n_layers+1), (i * (n_layers+1)) + layer+1)
+            ax.scatter(act_ranks, attr_ranks, s=1)
+            # set title below scatter plot
+            ax.set_title(f"Correlation: {corr:.2f}", y=-0.20)
+
+            
+            # Store the Axes object in our 2D array
+            axs[i, layer - 1] = ax
+
+            # Add x-label at the top
+            if i == 0:
+                ax.xaxis.set_label_position('top')
+                ax.set_xlabel(f"Layer {layer}", fontweight='bold')
+            
+            # Add y-label on the left
+            if layer == 0 or node_type == NodeType.RESID_END:
+                ax.set_ylabel(str(node_type.name), fontweight='bold')
+
+    # Remove empty spaces in the figure
+    fig.tight_layout()
+    # Adjust the spacing between subplots
+    plt.subplots_adjust(wspace=0.3, hspace=0.3)
+
+    # save figure
+
+    plt.savefig(ps_dir / "rank_corr_by_component.png")
+
+
+    # save rank correlations
+    save_json({str(k): v for k, v in rank_correlations.items()}, ps_dir, "rank_cor_by_component")
 
 
 # ### Plot Scores
 
-# In[ ]:
+# In[24]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
@@ -564,7 +580,7 @@ if not conf.act_patch and act_prune_scores is not None:
     plt.savefig(ps_dir / "act_attr_scores.png")
 
 
-# In[ ]:
+# In[25]:
 
 
 if not conf.act_patch and act_prune_scores is not None:
@@ -581,7 +597,7 @@ if not conf.act_patch and act_prune_scores is not None:
 
 # Constructing circuits from prune scores using either edge or fraction of prune score thresholds
 
-# In[16]:
+# In[26]:
 
 
 # set prune scores
@@ -627,15 +643,6 @@ if conf.acdc:
     ]
      circ_thresholds = taos[1:] + [t.inf] # prune scores set to tau if change less than tau
 else:
-    # if conf.prune_score_thresh: # frac total prune scores
-    #     # get sum of prune scores up to each index 
-    #     cum_prune_scores = np.cumsum(sorted_prune_scores.detach().cpu().numpy())
-    #     # normalize by total prune scores
-    #     norm_cum_prune_scores = cum_prune_scores / cum_prune_scores[-1] 
-    #     for frac in conf.fracs:
-    #         # get first index where fraction is greater than frac_prune_scores
-    #         n_edges = np.argmax(norm_cum_prune_scores > (1 - frac)) 
-    #         circ_edges.append(int(n_edges))
     circ_edges = edge_counts_util(task.model.edges, conf.edge_counts, zero_edges=True)
     circ_thresholds = [sorted_prune_scores[n_edges-1].item() for n_edges in circ_edges]
 
@@ -742,7 +749,7 @@ save_json(faith_metric_results_test, ps_dir, "faith_metric_results_test")
 save_json(faith_metrics_test, ps_dir, "faith_metrics_test")
 
 
-# In[22]:
+# In[ ]:
 
 
 # faith metrics eval 
@@ -812,7 +819,7 @@ save_json(equiv_test_results_test, ps_dir, "equiv_test_results_test")
 
 # ## Plot % loss recovered and Equiv Test Results Along Frac Edges / Frac Prune Scores
 
-# In[24]:
+# In[34]:
 
 
 import matplotlib.pyplot as plt
@@ -901,7 +908,7 @@ fig.savefig(edge_dir / "frac_loss_recovered_and_equiv_test_results_test.png")
 
 # ## Find Smallest Equivalent Circuit
 
-# In[61]:
+# In[37]:
 
 
 flat_ps = flat_prune_scores_ordered(prune_scores, order=prune_scores.keys())
@@ -926,15 +933,16 @@ edges = edges_from_mask(task.model.srcs, task.model.dests, edge_mask, task.token
 save_json([(edge.seq_idx, edge.name) for edge in  edges], edge_dir, "min_equiv_edges_train")
 
 
-# In[ ]:
+# In[82]:
 
 
-test_smallest = TASK_TO_OUTPUT_ANSWER_FUNCS[conf.task] == (conf.grad_func, conf.answer_func) and len(edges) < 20_000
+valid_task = TASK_TO_OUTPUT_ANSWER_FUNCS[conf.task] == (conf.grad_func, conf.answer_func) or conf.answer_func in DIV_ANSWER_FUNCS
+test_smallest = valid_task and len(edges) < 20_000
 
 
 # ## Plot Pruned Smallest Equivalent Circuit
 
-# In[ ]:
+# In[40]:
 
 
 if test_smallest:
@@ -954,7 +962,7 @@ if test_smallest:
 # 
 # Note: Seems like there is some leakage, not exactly sure why, but I guess its fine, not using this anyway
 
-# In[ ]:
+# In[41]:
 
 
 if test_smallest:
@@ -985,7 +993,7 @@ if test_smallest:
 
 # ### Verify Pruned Smallest Circuit Still Equivalent and achieves >95% loss recovered
 
-# In[ ]:
+# In[42]:
 
 
 if test_smallest:
@@ -1017,7 +1025,7 @@ if test_smallest:
     used_edges_out = run_circuit_from_mask(used_edges_mask, task.train_loader)
 
 
-# In[ ]:
+# In[43]:
 
 
 if test_smallest:
@@ -1034,7 +1042,7 @@ if test_smallest:
     save_json(faith_metric_results_used_edges, ps_dir, "faith_metric_results_used_edges")
 
 
-# In[ ]:
+# In[44]:
 
 
 # run equiv tests on used edges
@@ -1058,7 +1066,7 @@ if test_smallest:
 
 # ## Minimality Test and Change in %loss Recovered
 
-# In[41]:
+# In[45]:
 
 
 # only run on docstring to save time
@@ -1067,7 +1075,7 @@ run_min_test = test_smallest
 
 # ### Run Circuits with Each Edge Ablated 
 
-# In[ ]:
+# In[46]:
 
 
 if run_min_test:
@@ -1092,7 +1100,7 @@ if run_min_test:
 
 # ### Compute Change in %loss recovered
 
-# In[ ]:
+# In[47]:
 
 
 if run_min_test:
@@ -1120,7 +1128,7 @@ if run_min_test:
     save_json({edge_name(k): v for k, v in edge_faith_metrics_test.items()}, ps_dir, "edge_faith_metrics_test")
 
 
-# In[ ]:
+# In[48]:
 
 
 if run_min_test:
@@ -1153,7 +1161,7 @@ if run_min_test:
 
 # ### Minimality Test
 
-# In[45]:
+# In[49]:
 
 
 if run_min_test:
@@ -1161,7 +1169,7 @@ if run_min_test:
     graph = SeqGraph(task.model.edges, token=task.token_circuit, attn_only=task.model.cfg.attn_only)
 
 
-# In[ ]:
+# In[50]:
 
 
 if run_min_test:
@@ -1170,7 +1178,7 @@ if run_min_test:
     visualize_graph(graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, column_width=5, figsize=(36, 24))
 
 
-# In[ ]:
+# In[51]:
 
 
 # plot circuit graph
@@ -1180,7 +1188,7 @@ if run_min_test:
     visualize_graph(circ_graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, column_width=10, figsize=(72, 24))
 
 
-# In[ ]:
+# In[52]:
 
 
 # sample paths from complement for each data instance
@@ -1195,7 +1203,7 @@ if run_min_test:
     novel_edge_paths = [[edge for edge in path if edge not in edges_set] for path in sampled_paths]
 
 
-# In[ ]:
+# In[53]:
 
 
 if run_min_test:
@@ -1213,7 +1221,7 @@ if run_min_test:
     visualize_graph(ex_inflated_graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, edge_colors=edge_colors)
 
 
-# In[ ]:
+# In[54]:
 
 
 # sample paths to remove 
@@ -1229,7 +1237,7 @@ if run_min_test:
     visualize_graph(ex_inflated_graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, edge_colors=edge_colors)
 
 
-# In[ ]:
+# In[55]:
 
 
 if run_min_test:
@@ -1246,7 +1254,7 @@ if run_min_test:
     )
 
 
-# In[52]:
+# In[56]:
 
 
 if run_min_test:
@@ -1278,7 +1286,7 @@ if run_min_test:
         ablated_edge_mean_diffs[edge] = t.cat(ablated_diffs).mean().item()
 
 
-# In[ ]:
+# In[57]:
 
 
 if run_min_test:
@@ -1293,7 +1301,7 @@ if run_min_test:
         )
 
 
-# In[ ]:
+# In[58]:
 
 
 if run_min_test:
@@ -1324,22 +1332,23 @@ if run_min_test:
     fig.tight_layout()
 
 
-# In[ ]:
+# In[59]:
 
 
 if run_min_test:
     # plot correlation between minimality score (change in score) and prune score 
     edge_prune_scores = [prune_scores[edge.dest.module_name][edge.patch_idx].item() for edge in edges_by_min_score]
-    edge_purne_scores_rank = get_el_rank(t.tensor(edge_prune_scores))
+    edge_prune_scores_rank = get_el_rank(t.tensor(edge_prune_scores))
     min_scores_rank = get_el_rank(t.tensor(min_scores))
-    plt.scatter(edge_purne_scores_rank, min_scores_rank, s=0.1)
+    plt.scatter(edge_prune_scores_rank, min_scores_rank, s=1.0)
     plt.xlabel("Prune Score Rank")
-    plt.ylabel("Minimality Score Rank")
+    plt.ylabel("Circuit Prune Score Rank")
+    plt.savefig(edge_dir / "min_score_corr.png")
 
     # plot minimality score sorted by prune scores 
 
 
-# In[ ]:
+# In[60]:
 
 
 if run_min_test:
@@ -1364,7 +1373,7 @@ if run_min_test:
 
 # ### Minimality Test on "Ground Truth" Circuit
 
-# In[ ]:
+# In[61]:
 
 
 if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func):
@@ -1387,12 +1396,13 @@ if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func):
             outs_2=ablated_outs_true[i],
             grad_func=conf.grad_func,
             answer_func=conf.answer_func,
+            model_outs=model_out_test,
             device=task.device
         )
         inflated_ablated_mean_diffs_true.append(t.cat(inflated_ablated_diffs).mean().item())
 
 
-# In[ ]:
+# In[62]:
 
 
 if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func):
@@ -1480,7 +1490,29 @@ save_json(faith_metrics_c_test, ps_dir, "faith_metrics_c_test")
 # In[ ]:
 
 
-[(k, v['frac_mean_diff_recovered']) for k, v in faith_metric_results_c_train.items()]
+# compute faithfulness metrics using eval functions
+if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_func:
+    faith_metric_results_c_train_eval, faith_metrics_c_train_eval = compute_faith_metrics(
+        task.train_loader,
+        model_out_train,
+        ablated_out_train,
+        complement_outs_train,
+        conf.eval_grad_func,
+        conf.eval_answer_func,
+    )
+
+    faith_metric_results_c_test_eval, faith_metrics_c_test_eval = compute_faith_metrics(
+        task.test_loader,
+        model_out_test,
+        ablated_out_test,
+        complement_outs_test,
+        conf.eval_grad_func,
+        conf.eval_answer_func,
+    )
+    save_json(faith_metric_results_c_train_eval, ps_dir, "faith_metric_results_c_train_eval")
+    save_json(faith_metrics_c_train_eval, ps_dir, "faith_metrics_c_train_eval")
+    save_json(faith_metric_results_c_test_eval, ps_dir, "faith_metric_results_c_test_eval")
+    save_json(faith_metrics_c_test_eval, ps_dir, "faith_metrics_c_test_eval")
 
 
 # ## Independence HCIC (Frequentist) Test
@@ -1514,7 +1546,7 @@ save_json(faith_metrics_c_test, ps_dir, "faith_metrics_c_test")
 # 
 # 
 
-# In[62]:
+# In[67]:
 
 
 from auto_circuit_tests.hypo_tests.indep_test import independence_tests
@@ -1527,7 +1559,7 @@ indep_results_train = independence_tests(
     model=task.model, 
     dataloader=task.train_loader, 
     prune_scores=prune_scores, 
-    grad_function=conf.grad_func,
+    grad_func=conf.grad_func,
     answer_func=conf.answer_func,
     ablation_type=conf.ablation_type,
     model_out=model_out_train,
@@ -1536,12 +1568,6 @@ indep_results_train = independence_tests(
     B=1000
 )
 save_json(indep_results_train, ps_dir, "indep_results_train")
-
-
-# In[ ]:
-
-
-[(k, (v.p_value, faith_metric_results_c_train[k]['frac_mean_diff_recovered'])) for k, v in indep_results_train.items()]
 
 
 # In[ ]:
@@ -1561,6 +1587,39 @@ indep_results_test = independence_tests(
 )
 
 save_json(indep_results_test, ps_dir, "indep_results_test")
+
+
+# In[ ]:
+
+
+if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_func:
+    indep_results_train_eval = independence_tests(
+        model=task.model, 
+        dataloader=task.train_loader, 
+        prune_scores=prune_scores, 
+        grad_func=conf.eval_grad_func,
+        answer_func=conf.eval_answer_func,
+        ablation_type=conf.ablation_type,
+        model_out=model_out_train,
+        complement_circuit_outs=complement_outs_train,
+        alpha=conf.alpha,
+        B=1000
+    )
+    save_json(indep_results_train_eval, ps_dir, "indep_results_train_eval")
+
+    indep_results_test_eval = independence_tests(
+        model=task.model, 
+        dataloader=task.test_loader, 
+        prune_scores=prune_scores, 
+        grad_func=conf.eval_grad_func,
+        answer_func=conf.eval_answer_func,
+        ablation_type=conf.ablation_type,
+        model_out=model_out_test,
+        complement_circuit_outs=complement_outs_test,
+        alpha=conf.alpha,
+        B=1000
+    )
+    save_json(indep_results_test_eval, ps_dir, "indep_results_test_eval")
 
 
 # In[ ]:
@@ -1591,9 +1650,37 @@ fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
 fig.savefig(edge_dir / "frac_loss_recovered_and_indep_test_results_test.png")
 
 
-# ### Run Independence Test on True Edges
+# In[ ]:
+
+
+if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_func:
+    fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
+        faith_metric_results_c_train_eval, 
+        indep_results_train_eval,
+        title="(Train) Fraction of Loss Recovered by Complement and Independence Test Results",
+        null_good=True,
+        x_label="Edges" if not conf.prune_score_thresh else "Prune Scores"
+    )
+    fig.savefig(edge_dir / "frac_loss_recovered_and_indep_test_results_train_eval.png")
+
 
 # In[ ]:
+
+
+if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_func:
+    fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
+        faith_metric_results_c_test_eval, 
+        indep_results_test_eval,
+        title="(Test) Fraction of Loss Recovered by Complement and Independence Test Results",
+        null_good=True,
+        x_label="Edges" if not conf.prune_score_thresh else "Prune Scores"
+    )
+    fig.savefig(edge_dir / "frac_loss_recovered_and_indep_test_results_test_eval.png")
+
+
+# ### Run Independence Test on True Edges
+
+# In[81]:
 
 
 if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func):
@@ -1602,16 +1689,14 @@ if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func):
         task.test_loader, 
         task.model.circuit_prune_scores(task.true_edges), 
         ablation_type=conf.ablation_type,
-        grad_function=conf.grad_func,
-        answer_function=conf.answer_func,
+        grad_func=conf.grad_func,
+        answer_func=conf.answer_func,
         thresholds=[0.5], 
         model_out=model_out_test,
         alpha=conf.alpha,
         B=1000
     ).values()))
     save_json(result_to_json(indep_true_edge_result_test), out_answer_dir, f"indep_true_edge_result")
-
-print(indep_true_edge_result_test.reject_null, indep_true_edge_result_test.p_value)
 
 
 # # TODO: percent loss recovered compared to ablating random circuit, and partial necessity testma
