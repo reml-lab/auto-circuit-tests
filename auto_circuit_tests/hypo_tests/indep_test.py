@@ -30,6 +30,8 @@ def hsic(X: np.ndarray, Y: np.ndarray, gamma: float) -> float:
 
 def indep_test(X: np.ndarray, Y: np.ndarray, B: int, alpha: float) -> Tuple[bool, int, float]:
     rho = np.median(cdist(X, Y, metric='euclidean')) #torch.cdist(model_scores, comp_circuit_scores, p=2).median().item()
+    if rho == 0:
+        return True, 0, 0.0
     gamma = 1/rho
     t_obs = hsic(X, Y, gamma=gamma)
     t = 0
