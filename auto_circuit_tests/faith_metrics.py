@@ -23,7 +23,6 @@ def compute_faith_metrics(
     faith_metric_results: Dict[int, Dict[str, float]] = {}
 
     for n_edges, circ_outs in tqdm(list(circs_outs.items())):
-        abs_errors = []
         model_scores = []
         ablated_scores = []
         circ_scores = []
@@ -39,18 +38,20 @@ def compute_faith_metrics(
             model_scores_b = score_func(model_out, batch, model_out) # NOTE: always 0 if div_ans_func
             ablated_scores_b = score_func(ablated_out, batch, model_out)
             circ_scores_b = score_func(circ_out, batch, model_out)
-            abs_errors_b = t.abs(model_scores_b - circ_scores_b)
 
             model_scores.append(model_scores_b)
             ablated_scores.append(ablated_scores_b)
             circ_scores.append(circ_scores_b)
-            abs_errors.append(abs_errors_b)
         
-        # aggregate and compute means 
-        abs_errors = t.cat(abs_errors)
+        # aggregate scores 
         model_scores = t.cat(model_scores)
         ablated_scores = t.cat(ablated_scores)
         circ_scores = t.cat(circ_scores)
+
+        # compute abs errrors
+        abs_errors = t.abs(model_scores - circ_scores)
+
+        # compute means
         model_scores_mean = model_scores.mean()
         ablated_scores_mean = ablated_scores.mean()
         circ_scores_mean = circ_scores.mean()
@@ -65,7 +66,7 @@ def compute_faith_metrics(
         # compute mean diff and farc mean diff recovered 
         mean_diff = model_scores_mean - circ_scores_mean
         frac_mean_diff_recovered = (circ_scores_mean - ablated_scores_mean) / (model_scores_mean - ablated_scores_mean)
-        
+
         # store scores 
         faith_metrics[n_edges] = {
             "model_scores": model_scores.cpu().numpy().tolist(),
