@@ -280,7 +280,7 @@ def minimality_test(
             q_star=q_star
         )
         print(min_results[edge].num_edge_score_gt_ref)
-        if stop_if_reject and min_results[edge].reject_null:
+        if stop_if_reject and min_results[edge].reject_min_null:
             break
     
     reject_min = any(r.reject_min_null for r in min_results.values())
