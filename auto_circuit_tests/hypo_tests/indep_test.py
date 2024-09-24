@@ -46,7 +46,7 @@ def indep_test(X: np.ndarray, Y: np.ndarray, B: int, alpha: float) -> Tuple[bool
     return bool(p_value < alpha), int(t), p_value
 
 
-class IndepResults(NamedTuple):
+class IndepResult(NamedTuple):
     num_t_gt_t_obs: int
     B: int
     p_value: float
@@ -68,7 +68,7 @@ def independence_tests(
     complement_circuit_outs: Optional[CircuitOutputs] = None,
     alpha: float = 0.05,
     B: int = 1000,
-) -> Dict[int, IndepResults]:
+) -> Dict[int, IndepResult]:
 
     # compute complement outs 
     if complement_circuit_outs is None:
@@ -108,7 +108,7 @@ def independence_tests(
         )
        
         # store results
-        test_results[edge_count] = IndepResults(
+        test_results[edge_count] = IndepResult(
             num_t_gt_t_obs=t, B=B, p_value=p_value, reject_null=reject_null, 
             complement_model_scores=comp_circuit_scores.numpy().tolist(), 
             model_scores=model_scores.numpy().tolist()

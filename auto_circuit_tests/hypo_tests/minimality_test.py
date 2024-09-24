@@ -32,9 +32,10 @@ from auto_circuit_tests.utils.auto_circuit_utils import run_circuit_with_edge_ab
 class MinResult(NamedTuple):
     num_edge_score_gt_ref: int
     n: int
-    null_minimal: bool
-    reject_null: bool
-    p_value: float
+    reject_min_null: bool
+    reject_null_non_min: bool 
+    p_value_min: float
+    p_value_non_min: float
 
 
 def min_test(
@@ -66,12 +67,11 @@ def score_diffs(
         score_2 = score_func(outs_2[batch.key].to(device), batch, model_outs_batch)
         diffs.append(t.abs(score_1 - score_2).detach().cpu())
     return diffs
-    
 
 def minimality_test_edge(
     ablated_edge_mean_diff: float,
     inflated_ablated_mean_diffs: list[float],
-    null_minimal: bool = True,
+    n_edges: int,
     alpha: float = 0.05, 
     q_star: float = 0.9,
 ) -> MinResult: 
@@ -80,8 +80,22 @@ def minimality_test_edge(
         ablated_edge_mean_diff > inflated_ablated_mean_diff
         for inflated_ablated_mean_diff in inflated_ablated_mean_diffs
     )
-    reject_null, p_value = min_test(k, n, q_star, alpha, null_minimal)
-    return MinResult(k, n, null_minimal, reject_null, p_value)
+    # min null (bonferroni correction)
+    reject_min_null, p_value_min = min_test(
+        k, n, q_star, alpha / n_edges, null_minimal=True
+    )
+    # non-min null (no bonferroni correction)
+    reject_non_min_null, p_value_non_min = min_test(
+        k, n, q_star, alpha , null_minimal=False
+    )
+    return MinResult(
+        num_edge_score_gt_ref=k,
+        n=n,
+        reject_min_null=reject_min_null,
+        reject_null_non_min=reject_non_min_null,
+        p_value_min=p_value_min,
+        p_value_non_min=p_value_non_min
+    )
 
 
 def rem_edge_from_paths(paths: list[list[Edge]]) -> list[list[Edge]]:
@@ -168,17 +182,13 @@ def minimality_test(
     inflated_outs: Optional[CircuitOutputs]=None,
     ablated_outs: Optional[CircuitOutputs]=None,
     n_paths: Optional[int] = None,
-    null_minimal: bool = True,
     alpha: float = 0.05, 
-    bonferonni: bool = False,
     q_star: float = 0.9,
     device: str = t.device('cuda'),
     stop_if_reject: bool = False
 ) -> Tuple[Dict[Edge, MinResult], Optional[bool]]:
     
     assert (inflated_outs is None) == (ablated_outs is None) == (n_paths is not None)
-    if bonferonni:
-        alpha = alpha / len(edges)
     
     # model outs (for div metrics)
     if answer_func in DIV_ANSWER_FUNCS and model_outs is None:
@@ -265,7 +275,7 @@ def minimality_test(
         min_results[edge] = minimality_test_edge(
             ablated_edge_mean_diff=ablated_edge_mean_diffs[edge],
             inflated_ablated_mean_diffs=inflated_ablated_mean_diffs,
-            null_minimal=null_minimal,
+            n_edges=len(edges),
             alpha=alpha,
             q_star=q_star
         )
@@ -273,10 +283,8 @@ def minimality_test(
         if stop_if_reject and min_results[edge].reject_null:
             break
     
-    reject_null = None
-    if null_minimal:
-        reject_null = any(r.reject_null for r in min_results.values())
-    return min_results, reject_null
+    reject_min = any(r.reject_min_null for r in min_results.values())
+    return min_results, reject_min
 
 
 def plot_p_values(min_results: dict[Edge, MinResult], edge_scores: dict[Edge, t.Tensor], alpha: float = 0.05):

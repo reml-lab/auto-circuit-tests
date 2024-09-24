@@ -77,7 +77,7 @@ def equiv_test(
         # compute probability of >= k successes given p
         right_tail = 1 - binom.cdf(k, n, 1 / 2 - epsilon)
         reject_null = left_tail < alpha and right_tail < alpha
-    return bool(reject_null), left_tail, right_tail
+    return bool(reject_null)
 
 
 
@@ -105,10 +105,8 @@ def equiv_test(
 class EquivResult(NamedTuple):
     num_ablated_C_gt_M: int
     n: int
-    null_equiv: bool
-    reject_null: bool
-    left_tail: float
-    right_tail: float
+    reject_equiv: bool
+    reject_non_equiv: bool
     circ_scores: list[float]
     model_scores: list[float]
 
@@ -124,7 +122,6 @@ def equiv_tests(
     thresholds: Optional[list[float]] = None,
     model_out: Optional[BatchOutputs] = None,
     circuit_outs: Optional[CircuitOutputs] = None,
-    null_equiv: bool = True,
     alpha: float = 0.05,
     epsilon: float = 0.1,
 ) -> Dict[int, EquivResult]:
@@ -154,16 +151,13 @@ def equiv_tests(
         num_ablated_C_gt_M, n, circ_scores, model_scores = compute_num_C_gt_M(
             circuit_out, model_out, dataloader, grad_func, answer_func
         )
-        reject_nul, left_tail, right_tail = equiv_test(
-            num_ablated_C_gt_M, n, alpha, epsilon, null_equiv=null_equiv
-        )
+        reject_equiv = equiv_test(num_ablated_C_gt_M, n, alpha, epsilon, null_equiv=True)
+        reject_non_equiv = equiv_test(num_ablated_C_gt_M, n, alpha, epsilon, null_equiv=False)
         test_results[edge_count] = EquivResult(
             num_ablated_C_gt_M, 
             n, 
-            null_equiv=null_equiv,
-            reject_null=reject_nul,
-            left_tail=left_tail,
-            right_tail=right_tail,
+            reject_equiv,
+            reject_non_equiv,
             circ_scores=circ_scores.detach().cpu().numpy().tolist(), 
             model_scores=model_scores.detach().cpu().numpy().tolist()
         )
