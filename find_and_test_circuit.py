@@ -1553,7 +1553,8 @@ if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func):
 # In[ ]:
 
 
-if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func):
+true_edges_min_test_path = out_answer_dir / "true_edges_min_test_results.json"
+if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func) and not true_edges_min_test_path.exists():
     true_edges_min_test_results, null_rejected = minimality_test(
         model=task.model, 
         dataloader=task.test_loader,
@@ -1570,7 +1571,7 @@ if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func):
         device=task.device,
         stop_if_reject=True
     )
-    save_json({edge_name(k): v for k, v in true_edges_min_test_results.items()}, edge_dir, "true_edges_min_test_results")
+    save_json({edge_name(k): v for k, v in true_edges_min_test_results.items()}, out_answer_dir, "true_edges_min_test_results")
 
 
 # # Independence Test and Complement %Loss Recovered
@@ -1828,7 +1829,8 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
 # In[ ]:
 
 
-if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func):
+indep_true_edge_results_path = out_answer_dir / "indep_true_edge_results.json"
+if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func) and not indep_true_edge_results_path.exists():
     indep_true_edge_result_test = next(iter(independence_tests(
         task.model, 
         task.test_loader, 
