@@ -1776,7 +1776,7 @@ fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
     faith_metric_results_c_train, 
     indep_results_train,
     title="(Train) Fraction of Loss Recovered by Complement and Independence Test Results",
-    null_good=True,
+    result_type="indep",
     x_label="Edges" if not conf.prune_score_thresh else "Prune Scores"
 )
 fig.savefig(edge_dir / "frac_loss_recovered_and_indep_test_results_train.png")
@@ -1790,7 +1790,7 @@ fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
     faith_metric_results_c_test, 
     indep_results_test,
     title="(Test) Fraction of Loss Recovered by Complement and Independence Test Results",
-    
+    result_type="indep",
     x_label="Edges" if not conf.prune_score_thresh else "Prune Scores"
 )
 fig.savefig(edge_dir / "frac_loss_recovered_and_indep_test_results_test.png")
@@ -1804,7 +1804,7 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
         faith_metric_results_c_train_eval, 
         indep_results_train_eval,
         title="(Train) Fraction of Loss Recovered by Complement and Independence Test Results",
-        null_good=True,
+        result_type="indep",
         x_label="Edges" if not conf.prune_score_thresh else "Prune Scores"
     )
     fig.savefig(edge_dir / "frac_loss_recovered_and_indep_test_results_train_eval.png")
@@ -1818,7 +1818,7 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
         faith_metric_results_c_test_eval, 
         indep_results_test_eval,
         title="(Test) Fraction of Loss Recovered by Complement and Independence Test Results",
-        null_good=True,
+        result_type="indep",
         x_label="Edges" if not conf.prune_score_thresh else "Prune Scores"
     )
     fig.savefig(edge_dir / "frac_loss_recovered_and_indep_test_results_test_eval.png")
