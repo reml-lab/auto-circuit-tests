@@ -651,7 +651,7 @@ def plot_prune_scores(edge_scores):
     return fig, ax
 
 fig, ax = plot_prune_scores(sorted_prune_scores.cpu().numpy().tolist())
-plt.savefig(edge_dir / "edge_scores.png")
+plt.savefig(ps_dir / "edge_scores.png")
 plt.close()
 
 
@@ -768,10 +768,10 @@ faith_metric_results_test, faith_metrics_test = compute_faith_metrics(
     conf.answer_func,
 )
 
-save_json(faith_metric_results_train, ps_dir, "faith_metric_results_train")
-save_json(faith_metrics_train, ps_dir, "faith_metrics_train")
-save_json(faith_metric_results_test, ps_dir, "faith_metric_results_test")
-save_json(faith_metrics_test, ps_dir, "faith_metrics_test")
+save_json(faith_metric_results_train, edge_dir, "faith_metric_results_train")
+save_json(faith_metrics_train, edge_dir, "faith_metrics_train")
+save_json(faith_metric_results_test, edge_dir, "faith_metric_results_test")
+save_json(faith_metrics_test, edge_dir, "faith_metrics_test")
 
 
 # In[31]:
@@ -796,10 +796,10 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
         conf.eval_grad_func,
         conf.eval_answer_func,
     )
-    save_json(faith_metric_results_train_eval, ps_dir, "faith_metric_results_train_eval")
-    save_json(faith_metrics_train_eval, ps_dir, "faith_metrics_train_eval")
-    save_json(faith_metric_results_test_eval, ps_dir, "faith_metric_results_test_eval")
-    save_json(faith_metrics_test_eval, ps_dir, "faith_metrics_test_eval")
+    save_json(faith_metric_results_train_eval, edge_dir, "faith_metric_results_train_eval")
+    save_json(faith_metrics_train_eval, edge_dir, "faith_metrics_train_eval")
+    save_json(faith_metric_results_test_eval, edge_dir, "faith_metric_results_test_eval")
+    save_json(faith_metrics_test_eval, edge_dir, "faith_metrics_test_eval")
 
 
 # ## Equivalence Tests
@@ -834,8 +834,8 @@ equiv_test_results_test = equiv_tests(
     epsilon=conf.epsilon,
 )
 
-save_json(equiv_test_results_train, ps_dir, "equiv_test_results_train")
-save_json(equiv_test_results_test, ps_dir, "equiv_test_results_test")
+save_json(equiv_test_results_train, edge_dir, "equiv_test_results_train")
+save_json(equiv_test_results_test, edge_dir, "equiv_test_results_test")
 
 
 # ## TODO: Sufficiency Test, and Expected Loss Recovered with Respect to Expected Value of Random Circuit of the same size
@@ -1114,7 +1114,7 @@ if test_smallest:
         conf.answer_func,
     )
     print(f"Used Edges Train %loss recovered: {list(faith_metric_results_used_edges.values())[0]['frac_mean_diff_recovered']}")
-    save_json(faith_metric_results_used_edges, ps_dir, "faith_metric_results_used_edges")
+    save_json(faith_metric_results_used_edges, edge_dir, "faith_metric_results_used_edges")
 
 
 # In[45]:
@@ -1135,7 +1135,7 @@ if test_smallest:
         epsilon=conf.epsilon,
     )
     print(f"Used Edges Null Rejected: {list(equiv_test_results_used_edges.values())[0].reject_non_equiv}")
-    save_json(equiv_test_results_used_edges, ps_dir, "equiv_test_results_used_edges")
+    save_json(equiv_test_results_used_edges, edge_dir, "equiv_test_results_used_edges")
 
 
 # ## Minimality Test and Change in %loss Recovered
@@ -1187,8 +1187,8 @@ if run_min_test:
         conf.answer_func,
     )
     # hmm this should just be by edge, also I want the edge order
-    save_json({edge_name(k): v for k, v in edge_faith_metric_results_train.items()}, ps_dir, "edge_faith_metric_results_train")
-    save_json({edge_name(k): v for k, v in edge_faith_metrics_train.items()}, ps_dir, "edge_faith_metrics_train")
+    save_json({edge_name(k): v for k, v in edge_faith_metric_results_train.items()}, edge_dir, "edge_faith_metric_results_train")
+    save_json({edge_name(k): v for k, v in edge_faith_metrics_train.items()}, edge_dir, "edge_faith_metrics_train")
 
     edge_faith_metric_results_test, edge_faith_metrics_test = compute_faith_metrics(
         task.test_loader,
@@ -1198,8 +1198,8 @@ if run_min_test:
         conf.grad_func,
         conf.answer_func,
     )
-    save_json({edge_name(k): v for k, v in edge_faith_metric_results_test.items()}, ps_dir, "edge_faith_metric_results_test")
-    save_json({edge_name(k): v for k, v in edge_faith_metrics_test.items()}, ps_dir, "edge_faith_metrics_test")
+    save_json({edge_name(k): v for k, v in edge_faith_metric_results_test.items()}, edge_dir, "edge_faith_metric_results_test")
+    save_json({edge_name(k): v for k, v in edge_faith_metrics_test.items()}, edge_dir, "edge_faith_metrics_test")
 
 
 # In[49]:
@@ -1641,10 +1641,10 @@ faith_metric_results_c_test, faith_metrics_c_test = compute_faith_metrics(
 )
 
 
-save_json(faith_metric_results_c_train, ps_dir, "faith_metric_results_c_train")
-save_json(faith_metrics_c_train, ps_dir, "faith_metrics_c_train")
-save_json(faith_metric_results_c_test, ps_dir, "faith_metric_results_c_test")
-save_json(faith_metrics_c_test, ps_dir, "faith_metrics_c_test")
+save_json(faith_metric_results_c_train, edge_dir, "faith_metric_results_c_train")
+save_json(faith_metrics_c_train, edge_dir, "faith_metrics_c_train")
+save_json(faith_metric_results_c_test, edge_dir, "faith_metric_results_c_test")
+save_json(faith_metrics_c_test, edge_dir, "faith_metrics_c_test")
 
 
 # In[67]:
@@ -1669,10 +1669,10 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
         conf.eval_grad_func,
         conf.eval_answer_func,
     )
-    save_json(faith_metric_results_c_train_eval, ps_dir, "faith_metric_results_c_train_eval")
-    save_json(faith_metrics_c_train_eval, ps_dir, "faith_metrics_c_train_eval")
-    save_json(faith_metric_results_c_test_eval, ps_dir, "faith_metric_results_c_test_eval")
-    save_json(faith_metrics_c_test_eval, ps_dir, "faith_metrics_c_test_eval")
+    save_json(faith_metric_results_c_train_eval, edge_dir, "faith_metric_results_c_train_eval")
+    save_json(faith_metrics_c_train_eval, edge_dir, "faith_metrics_c_train_eval")
+    save_json(faith_metric_results_c_test_eval, edge_dir, "faith_metric_results_c_test_eval")
+    save_json(faith_metrics_c_test_eval, edge_dir, "faith_metrics_c_test_eval")
 
 
 # ## Independence HCIC (Frequentist) Test
@@ -1727,7 +1727,7 @@ indep_results_train = independence_tests(
     alpha=conf.alpha,
     B=1000
 )
-save_json(indep_results_train, ps_dir, "indep_results_train")
+save_json(indep_results_train, edge_dir, "indep_results_train")
 
 
 # In[70]:
@@ -1746,7 +1746,7 @@ indep_results_test = independence_tests(
     B=1000
 )
 
-save_json(indep_results_test, ps_dir, "indep_results_test")
+save_json(indep_results_test, edge_dir, "indep_results_test")
 
 
 # In[71]:
@@ -1765,7 +1765,7 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
         alpha=conf.alpha,
         B=1000
     )
-    save_json(indep_results_train_eval, ps_dir, "indep_results_train_eval")
+    save_json(indep_results_train_eval, edge_dir, "indep_results_train_eval")
 
     indep_results_test_eval = independence_tests(
         model=task.model, 
@@ -1779,7 +1779,7 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
         alpha=conf.alpha,
         B=1000
     )
-    save_json(indep_results_test_eval, ps_dir, "indep_results_test_eval")
+    save_json(indep_results_test_eval, edge_dir, "indep_results_test_eval")
 
 
 # In[72]:
