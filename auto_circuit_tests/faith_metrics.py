@@ -1,6 +1,6 @@
 # TODO: compute on train and test distribution
 from functools import partial
-from typing import Dict
+from typing import Dict, Any, Optional
 
 import torch as t
 
@@ -14,30 +14,42 @@ def compute_faith_metrics(
     dataloader: PromptDataLoader,
     model_outs: BatchOutputs,
     ablated_outs: BatchOutputs,
-    circs_outs: CircuitOutputs,
     grad_func: GradFunc,
     answer_func: AnswerFunc,
+    circs_outs: Optional[Dict[Any, BatchOutputs]]=None,
+    circs_scores: Optional[Dict[Any, BatchOutputs]]=None, 
 ): 
     score_func = partial(compute_scores, grad_func=grad_func, answer_func=answer_func)
-    faith_metrics: Dict[int, Dict[str, float]] = {}
-    faith_metric_results: Dict[int, Dict[str, float]] = {}
+    assert (circs_outs is not None) ^ (circs_scores is not None)
+    
+    # compute circ scores if not provided
+    if circs_scores is None:
+        circs_scores: Dict[Any, BatchOutputs] = {}
+        for k, circ_outs in circs_outs.items():
+            circs_scores[k] = {
+                batch.key: score_func(circ_outs[batch.key], batch, model_outs[batch.key]) 
+                for batch in dataloader
+            }
+    
+    
+    faith_metrics: Dict[Any, Dict[str, float]] = {}
+    faith_metric_results: Dict[Any, Dict[str, float]] = {}
 
-    for n_edges, circ_outs in tqdm(list(circs_outs.items())):
+    for circ, circ_scores_per_batch in tqdm(circs_scores.items(), desc="Computing faith metrics"):
         model_scores = []
         ablated_scores = []
         circ_scores = []
 
-        n = 0
+        # compute model and ablated scores
         for batch in dataloader: 
             batch: PromptPairBatch 
             model_out = model_outs[batch.key]
             ablated_out = ablated_outs[batch.key]
-            circ_out = circ_outs[batch.key].to(model_out.device)
 
             # compute score and abs error, sum
             model_scores_b = score_func(model_out, batch, model_out) # NOTE: always 0 if div_ans_func
             ablated_scores_b = score_func(ablated_out, batch, model_out)
-            circ_scores_b = score_func(circ_out, batch, model_out)
+            circ_scores_b = circ_scores_per_batch[batch.key]
 
             model_scores.append(model_scores_b)
             ablated_scores.append(ablated_scores_b)
@@ -68,7 +80,7 @@ def compute_faith_metrics(
         frac_mean_diff_recovered = (circ_scores_mean - ablated_scores_mean) / (model_scores_mean - ablated_scores_mean)
 
         # store scores 
-        faith_metrics[n_edges] = {
+        faith_metrics[circ] = {
             "model_scores": model_scores.cpu().numpy().tolist(),
             "ablated_scores": ablated_scores.cpu().numpy().tolist(),
             "circ_scores": circ_scores.cpu().numpy().tolist(),
@@ -76,7 +88,7 @@ def compute_faith_metrics(
         }
 
         # log results
-        faith_metric_results[n_edges] = {
+        faith_metric_results[circ] = {
             "model_scores_mean": model_scores_mean.item(),
             "model_scores_std": model_scores_std.item(),
             "ablated_scores_mean": ablated_scores_mean.item(),

@@ -2,6 +2,7 @@ from typing import Callable, Dict, Tuple, Union, Optional, Any, Literal, NamedTu
 import random
 from copy import deepcopy
 from functools import partial
+from typing import cast
 
 import torch as t
 import numpy as np
@@ -24,6 +25,7 @@ from auto_circuit.utils.patchable_model import PatchableModel
 from auto_circuit.utils.custom_tqdm import tqdm
 
 from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, compute_scores, DIV_ANSWER_FUNCS
+from auto_circuit_tests.edge_scores import compute_edge_scores
 from auto_circuit_tests.edge_graph import SeqGraph, sample_paths 
 from auto_circuit_tests.hypo_tests.utils import join_values, remove_el
 from auto_circuit_tests.utils.auto_circuit_utils import run_circuit_with_edge_ablated
@@ -51,21 +53,38 @@ def min_test(
 
 def score_diffs(
     dataloader: PromptDataLoader,
-    outs_1: BatchOutputs, 
-    outs_2: BatchOutputs,
     grad_func: GradFunc,
     answer_func: AnswerFunc,
+    outs_1: Optional[BatchOutputs]=None,  
+    outs_2: Optional[BatchOutputs]=None, 
+    scores_1: Optional[BatchOutputs]=None,
+    scores_2: Optional[BatchOutputs]=None,
     model_outs: Optional[BatchOutputs] = None,
     device: str = t.device('cuda')
-) -> list[t.Tensor]:
+) -> t.Tensor:
+    assert (outs_1 is not None) ^ (scores_1 is not None)
+    assert (outs_2 is not None) ^ (scores_2 is not None)
     diffs = []
     score_func = partial(compute_scores, grad_func=grad_func, answer_func=answer_func)
+    # compute scores if not passed
+    if scores_1 is None:
+        scores_1 = {
+            batch.key: 
+            score_func(outs_1[batch.key].to(device), batch, model_outs[batch.key].to(device))
+            for batch in dataloader
+        }
+    if scores_2 is None:
+        scores_2 = {
+            batch.key: 
+            score_func(outs_2[batch.key].to(device), batch, model_outs[batch.key].to(device))
+            for batch in dataloader
+        }
+    # compute diffs
     for batch in dataloader:
-        batch: PromptPairBatch
-        model_outs_batch = model_outs[batch.key].to(device) if model_outs is not None else None
-        score_1 = score_func(outs_1[batch.key].to(device), batch, model_outs_batch)
-        score_2 = score_func(outs_2[batch.key].to(device), batch, model_outs_batch)
+        score_1 = scores_1[batch.key]
+        score_2 = scores_2[batch.key]
         diffs.append(t.abs(score_1 - score_2).detach().cpu())
+    diffs = t.cat(diffs)
     return diffs
 
 def minimality_test_edge(
@@ -177,7 +196,7 @@ def minimality_test(
     ablation_type: AblationType,
     token: bool,
     circuit_outs: Optional[BatchOutputs]=None,
-    edges_outs: Optional[Dict[Edge, BatchOutputs]]=None, 
+    edges_scores: Optional[Dict[Edge, BatchOutputs]]=None,
     model_outs: Optional[BatchOutputs]=None,
     inflated_outs: Optional[CircuitOutputs]=None,
     ablated_outs: Optional[CircuitOutputs]=None,
@@ -212,14 +231,15 @@ def minimality_test(
     inflated_ablated_mean_diffs: list[float] = []
     for i, inflated_out in inflated_outs.items():
         inflated_ablated_diffs = score_diffs(
+            grad_func=grad_func,
+            answer_func=answer_func,
             dataloader=dataloader,
             outs_1=inflated_out,
             outs_2=ablated_outs[i],
-            grad_func=grad_func,
-            answer_func=answer_func,
+            model_outs=model_outs,
             device=device
         )
-        inflated_ablated_mean_diffs.append(t.cat(inflated_ablated_diffs).mean().item())
+        inflated_ablated_mean_diffs.append(inflated_ablated_diffs.mean().item())
 
     # circuit outs
     if circuit_outs is None:
@@ -245,23 +265,23 @@ def minimality_test(
             threshold=threshold,
             to_cpu=True
         )
-    def get_ablated_edge_mean_diff(edge_out: BatchOutputs) -> float:
+    def get_ablated_edge_mean_diff(edge_scores: BatchOutputs) -> float:
         ablated_diffs = score_diffs(
             dataloader=dataloader,
-            outs_1=edge_out,
+            scores_1=edge_scores,
             outs_2=circuit_outs,
             grad_func=grad_func,
             answer_func=answer_func,
             device=device
         )
-        return t.cat(ablated_diffs).mean().item()  
+        return ablated_diffs.mean().item()  
     
     ablated_edge_mean_diffs: dict[Edge, float] = {}
     # edges out 
-    if edges_outs is not None:
+    if edges_scores is not None:
         # compute mean diffs for each ablated edge
         for edge in edges:
-            ablated_diffs = get_ablated_edge_mean_diff(edges_outs[edge])
+            ablated_diffs = get_ablated_edge_mean_diff(edges_scores[edge])
             ablated_edge_mean_diffs[edge] = t.cat(ablated_diffs).mean().item()
 
     # run minimality test

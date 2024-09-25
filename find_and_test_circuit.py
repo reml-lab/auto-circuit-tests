@@ -24,7 +24,7 @@ if is_notebook():
     # os.environ['TORCH_USE_CUDA_DSA'] = "1"
 
 
-# In[2]:
+# In[ ]:
 
 
 import torch 
@@ -42,7 +42,7 @@ torch.cuda.is_available()
 # 
 # 
 
-# In[3]:
+# In[ ]:
 
 
 import os
@@ -84,7 +84,9 @@ from auto_circuit_tests.prune_algos import PruneAlgo
 from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, DIV_ANSWER_FUNCS
 # from auto_circuit_tests.faithful_metrics import FaithfulMetric
 
+from auto_circuit_tests.edge_scores import compute_edge_scores
 from auto_circuit_tests.utils.auto_circuit_utils import (
+    run_circuit_with_edge_ablated,
     run_circuit_with_edges_ablated, 
     run_fully_ablated_model, 
     flat_prune_scores_ordered
@@ -203,7 +205,7 @@ task_dir, ablation_dir, out_answer_dir, ps_dir, edge_dir, exp_dir = get_exp_dir(
 exp_dir.mkdir(parents=True, exist_ok=True)
 
 
-# In[7]:
+# In[ ]:
 
 
 # initialize task
@@ -268,7 +270,7 @@ if conf.prune_algo == PruneAlgo.CIRC_PROBE and conf.answer_func == AnswerFunc.KL
 
 # ## Activation Patching Prune Scores
 
-# In[10]:
+# In[ ]:
 
 
 # load from cache if exists 
@@ -617,7 +619,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
 
 # Constructing circuits from prune scores using either edge or fraction of prune score thresholds
 
-# In[25]:
+# In[14]:
 
 
 # set prune scores
@@ -635,7 +637,7 @@ prune_scores = {mod_name: score.to(task.device) for mod_name, score in prune_sco
 sorted_prune_scores = desc_prune_scores(prune_scores)
 
 
-# In[26]:
+# In[15]:
 
 
 # plot prune scores
@@ -655,7 +657,7 @@ plt.savefig(ps_dir / "edge_scores.png")
 plt.close()
 
 
-# In[27]:
+# In[ ]:
 
 
 # compute n_edges 
@@ -686,7 +688,7 @@ save_json(circ_edges, edge_dir, "n_circ_edges")
 # - frac mean difference recovered: E[score(C)] - E[score(A)] / E[score(M)] - E[score(A)] 
 # (SAE work, similar to causal scrubbing, don't need to worry about variance)
 
-# In[28]:
+# In[ ]:
 
 
 # first full model outt and ablated model out
@@ -714,7 +716,7 @@ ablated_out_test: BatchOutputs = run_fully_ablated_model(
 )
 
 
-# In[29]:
+# In[ ]:
 
 
 # next get circuit outs for each threshold
@@ -729,6 +731,7 @@ circuit_outs_train: CircuitOutputs = run_circuits(
     ablation_type=conf.ablation_type,
     reverse_clean_corrupt=False, 
 )
+circuit_outs_train = dict(circuit_outs_train)
 
 circuit_outs_test: CircuitOutputs = run_circuits(
     model=task.model, 
@@ -739,6 +742,7 @@ circuit_outs_test: CircuitOutputs = run_circuits(
     ablation_type=conf.ablation_type,
     reverse_clean_corrupt=False, 
 )
+circuit_outs_test = dict(circuit_outs_test)
 
 
 # ## Faithfulness Metrics
@@ -747,25 +751,37 @@ circuit_outs_test: CircuitOutputs = run_circuits(
 # - mean difference: E[score(M)] - E[score(C)] 
 # - frac mean difference recovered: E[score(C)] - E[score(A)] / E[score(M)] - E[score(A)]
 
-# In[30]:
+# In[ ]:
+
+
+[batch.key for batch in task.train_loader], [k for k in model_out_train.keys()], 
+
+
+# In[ ]:
+
+
+[[k for k in out.keys()] for out in circuit_outs_train.values()]
+
+
+# In[ ]:
 
 
 faith_metric_results_train, faith_metrics_train = compute_faith_metrics(
     task.train_loader,
     model_out_train,
     ablated_out_train,
-    circuit_outs_train,
     conf.grad_func,
     conf.answer_func,
+    circs_outs=circuit_outs_train,
 )
 
 faith_metric_results_test, faith_metrics_test = compute_faith_metrics(
     task.test_loader,
     model_out_test,
     ablated_out_test,
-    circuit_outs_test,
     conf.grad_func,
     conf.answer_func,
+    circs_outs=circuit_outs_test,
 )
 
 save_json(faith_metric_results_train, edge_dir, "faith_metric_results_train")
@@ -774,7 +790,7 @@ save_json(faith_metric_results_test, edge_dir, "faith_metric_results_test")
 save_json(faith_metrics_test, edge_dir, "faith_metrics_test")
 
 
-# In[31]:
+# In[38]:
 
 
 # faith metrics eval 
@@ -783,18 +799,18 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
         task.train_loader,
         model_out_train,
         ablated_out_train,
-        circuit_outs_train,
         conf.eval_grad_func,
         conf.eval_answer_func,
+        circs_outs=circuit_outs_train,
     )
 
     faith_metric_results_test_eval, faith_metrics_test_eval = compute_faith_metrics(
         task.test_loader,
         model_out_test,
         ablated_out_test,
-        circuit_outs_test,
         conf.eval_grad_func,
         conf.eval_answer_func,
+        circs_outs=circuit_outs_test,
     )
     save_json(faith_metric_results_train_eval, edge_dir, "faith_metric_results_train_eval")
     save_json(faith_metrics_train_eval, edge_dir, "faith_metrics_train_eval")
@@ -804,7 +820,7 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
 
 # ## Equivalence Tests
 
-# In[32]:
+# In[ ]:
 
 
 use_eval_metrics = conf.answer_func in DIV_ANSWER_FUNCS
@@ -842,7 +858,7 @@ save_json(equiv_test_results_test, edge_dir, "equiv_test_results_test")
 
 # ## Plot % loss recovered and Equiv Test Results Along Frac Edges / Frac Prune Scores
 
-# In[33]:
+# In[40]:
 
 
 import matplotlib.pyplot as plt
@@ -918,7 +934,7 @@ def plot_frac_loss_recovered_and_equiv_test_results(
     return fig, ax
 
 
-# In[34]:
+# In[41]:
 
 
 # plot results using div answer function (no equivalence results)
@@ -934,7 +950,7 @@ if use_eval_metrics:
     plt.close()
 
 
-# In[35]:
+# In[42]:
 
 
 # plot results using div answer function (no equivalence results)
@@ -949,7 +965,7 @@ if use_eval_metrics:
     plt.close()
 
 
-# In[36]:
+# In[43]:
 
 
 # TODO: figure out why this plotting is off
@@ -965,7 +981,7 @@ fig.savefig(edge_dir / "frac_loss_recovered_and_equiv_test_results_train.png")
 plt.close()
 
 
-# In[37]:
+# In[44]:
 
 
 fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
@@ -983,13 +999,13 @@ plt.close()
 
 # ## Find Smallest Equivalent Circuit
 
-# In[38]:
+# In[45]:
 
 
 flat_ps = flat_prune_scores_ordered(prune_scores, order=prune_scores.keys())
 
 
-# In[39]:
+# In[ ]:
 
 
 # find smallest equiv circuit on training distribution
@@ -1008,7 +1024,7 @@ edges = edges_from_mask(task.model.srcs, task.model.dests, edge_mask, task.token
 save_json([(edge.seq_idx, edge.name) for edge in  edges], edge_dir, "min_equiv_edges_train")
 
 
-# In[40]:
+# In[47]:
 
 
 valid_task = TASK_TO_OUTPUT_ANSWER_FUNCS[conf.task] == (conf.grad_func, conf.answer_func) or conf.answer_func in DIV_ANSWER_FUNCS
@@ -1037,7 +1053,7 @@ if test_smallest:
 # 
 # Note: Seems like there is some leakage, not exactly sure why, but I guess its fine, not using this anyway
 
-# In[42]:
+# In[ ]:
 
 
 if test_smallest:
@@ -1068,7 +1084,7 @@ if test_smallest:
 
 # ### Verify Pruned Smallest Circuit Still Equivalent and achieves >95% loss recovered
 
-# In[43]:
+# In[ ]:
 
 
 if test_smallest:
@@ -1100,7 +1116,7 @@ if test_smallest:
     used_edges_out = run_circuit_from_mask(used_edges_mask, task.train_loader)
 
 
-# In[44]:
+# In[ ]:
 
 
 if test_smallest:
@@ -1109,15 +1125,15 @@ if test_smallest:
         task.train_loader,
         model_out_train,
         ablated_out_train,
-        used_edges_out,
         conf.grad_func,
         conf.answer_func,
+        circs_outs=used_edges_out,
     )
     print(f"Used Edges Train %loss recovered: {list(faith_metric_results_used_edges.values())[0]['frac_mean_diff_recovered']}")
     save_json(faith_metric_results_used_edges, edge_dir, "faith_metric_results_used_edges")
 
 
-# In[45]:
+# In[ ]:
 
 
 # run equiv tests on used edges
@@ -1140,41 +1156,47 @@ if test_smallest:
 
 # ## Minimality Test and Change in %loss Recovered
 
-# In[46]:
+# In[48]:
 
 
 # only run on docstring to save time
 run_min_test = test_smallest
 
 
-# ### Run Circuits with Each Edge Ablated 
+# ### Compute Scores after  Ablating Each Edge
 
-# In[47]:
+# In[ ]:
 
 
 if run_min_test:
-    edge_outs_train= run_circuit_with_edges_ablated(
+    edges_scores_train = compute_edge_scores(
         model=task.model,
         dataloader=task.train_loader,
         prune_scores=prune_scores,
         edges=edges,
+        grad_func=conf.grad_func,
+        answer_func=conf.answer_func,
         ablation_type=conf.ablation_type,
+        model_out=model_out_train,
         threshold=threshold,
     )
 
-    edge_outs_test = run_circuit_with_edges_ablated(
+    edges_scores_test = compute_edge_scores(
         model=task.model,
         dataloader=task.test_loader,
         prune_scores=prune_scores,
         edges=edges,
+        grad_func=conf.grad_func,
+        answer_func=conf.answer_func,
         ablation_type=conf.ablation_type,
+        model_out=model_out_test,
         threshold=threshold,
     )
 
 
 # ### Compute Change in %loss recovered
 
-# In[48]:
+# In[ ]:
 
 
 if run_min_test:
@@ -1182,9 +1204,9 @@ if run_min_test:
         task.train_loader,
         model_out_train,
         ablated_out_train,
-        edge_outs_train, # NOTE - wrong data type, keys should be ints, but doesn't matter
         conf.grad_func,
         conf.answer_func,
+        circs_scores=edges_scores_train,
     )
     # hmm this should just be by edge, also I want the edge order
     save_json({edge_name(k): v for k, v in edge_faith_metric_results_train.items()}, edge_dir, "edge_faith_metric_results_train")
@@ -1194,15 +1216,15 @@ if run_min_test:
         task.test_loader,
         model_out_test,
         ablated_out_test,
-        edge_outs_test, # NOTE - wrong data type, keys should be ints, but doesn't matter
         conf.grad_func,
         conf.answer_func,
+        circs_scores=edges_scores_test,
     )
     save_json({edge_name(k): v for k, v in edge_faith_metric_results_test.items()}, edge_dir, "edge_faith_metric_results_test")
     save_json({edge_name(k): v for k, v in edge_faith_metrics_test.items()}, edge_dir, "edge_faith_metrics_test")
 
 
-# In[49]:
+# In[57]:
 
 
 if run_min_test:
@@ -1238,7 +1260,7 @@ if run_min_test:
 
 # ### Compute Activation Patching Scores on Circuit and Correlation Between Activation Patching Scores on Full Model
 
-# In[50]:
+# In[58]:
 
 
 if run_min_test:
@@ -1271,45 +1293,29 @@ if run_min_test:
             conf.answer_func.value
         )
 
-    def compute_edge_scores(
+    def compute_edge_act_prune_scores(
         model: PatchableModel,
-        dataloader: PromptDataLoader,
-        edge_outs: dict[Edge, BatchOutputs],
-        model_outs: BatchOutputs,
-        grad_func: str,
-        answer_func: str,
+        edges_scores: dict[Edge, BatchOutputs],
         full_model_score: float,
     ) -> PruneScores:
         edge_prune_scores = model.new_prune_scores()
         for mod_name in edge_prune_scores.keys():
             edge_prune_scores[mod_name] += full_model_score
-        for edge, edge_out in edge_outs.items():
-            for batch in dataloader:
-                edge_score = -compute_loss(
-                    model, 
-                    batch, 
-                    grad_func, 
-                    answer_func, 
-                    logits=edge_out[batch.key].to(task.device),
-                    clean_out=model_outs[batch.key].to(task.device)
-                ).sum().item()
-                edge_prune_scores[edge.dest.module_name][edge.patch_idx] -= edge_score
+        for edge, edge_scores in edges_scores.items():
+                edge_scores = t.cat([v for v in edge_scores.values()])
+                edge_prune_scores[edge.dest.module_name][edge.patch_idx] -= edge_scores.sum()
         return edge_prune_scores
 
 
     # edge outs train 
-    edge_circ_act_prune_scores = compute_edge_scores(
+    edge_circ_act_prune_scores = compute_edge_act_prune_scores(
         task.model,
-        task.train_loader,
-        edge_outs_train,
-        model_out_train,
-        conf.grad_func.value,
-        conf.answer_func.value,
+        edges_scores_train,
         full_model_score,
     )
 
 
-# In[51]:
+# In[ ]:
 
 
 # compute correlation
@@ -1335,7 +1341,7 @@ if run_min_test:
 
 # ### Minimality Test
 
-# In[52]:
+# In[61]:
 
 
 if run_min_test:
@@ -1343,26 +1349,28 @@ if run_min_test:
     graph = SeqGraph(task.model.edges, token=task.token_circuit, attn_only=task.model.cfg.attn_only)
 
 
-# In[53]:
+# In[ ]:
 
 
 if run_min_test:
     # ok so there should be columns for each sequence position, and subcolumsn for each component
     seq_idxs = [0, task.test_loader.seq_len-1] if task.token_circuit else None
-    visualize_graph(graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, column_width=5, figsize=(36, 24))
+    if is_notebook():
+        visualize_graph(graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, column_width=5, figsize=(36, 24))
 
 
-# In[54]:
+# In[ ]:
 
 
 # plot circuit graph
 if run_min_test:
     circ_graph = SeqGraph(edges, token=task.token_circuit, attn_only=task.model.cfg.attn_only)
     seq_idxs = set([seq_node.seq_idx for seq_node in circ_graph.seq_nodes])
-    visualize_graph(circ_graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, column_width=10, figsize=(72, 24))
+    if is_notebook():
+        visualize_graph(circ_graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, column_width=10, figsize=(72, 24))
 
 
-# In[55]:
+# In[ ]:
 
 
 # sample paths from complement for each data instance
@@ -1377,7 +1385,7 @@ if run_min_test:
     novel_edge_paths = [[edge for edge in path if edge not in edges_set] for path in sampled_paths]
 
 
-# In[56]:
+# In[ ]:
 
 
 if run_min_test:
@@ -1392,10 +1400,11 @@ if run_min_test:
     edge_colors = {}
     [edge_colors.update({edge: 'blue'}) for edge in novel_edges]
     [edge_colors.update({edge: 'darkblue'}) for edge in redundant_edges]
-    visualize_graph(ex_inflated_graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, edge_colors=edge_colors)
+    if is_notebook():
+        visualize_graph(ex_inflated_graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, edge_colors=edge_colors)
 
 
-# In[57]:
+# In[ ]:
 
 
 # sample paths to remove 
@@ -1408,10 +1417,11 @@ if run_min_test:
         removed_edges.append(path[edge_idx_to_remove])
     removed_edge = removed_edges[path_idx]
     edge_colors[removed_edge] = 'red'
-    visualize_graph(ex_inflated_graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, edge_colors=edge_colors)
+    if is_notebook():
+        visualize_graph(ex_inflated_graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, edge_colors=edge_colors)
 
 
-# In[58]:
+# In[ ]:
 
 
 if run_min_test:
@@ -1428,7 +1438,13 @@ if run_min_test:
     )
 
 
-# In[59]:
+# In[ ]:
+
+
+type(ablated_outs)
+
+
+# In[72]:
 
 
 if run_min_test:
@@ -1437,30 +1453,31 @@ if run_min_test:
     for i, inflated_out in inflated_outs.items():
         inflated_ablated_diffs = score_diffs(
             dataloader=task.train_loader,
-            outs_1=inflated_out,
-            outs_2=ablated_outs[i],
             grad_func=conf.grad_func,
             answer_func=conf.answer_func,
+            outs_1=inflated_out,
+            outs_2=ablated_outs[i],
+            model_outs=model_out_train,
             device=task.device
         )
-        inflated_ablated_mean_diffs.append(t.cat(inflated_ablated_diffs).mean().item())
+        inflated_ablated_mean_diffs.append(inflated_ablated_diffs.mean().item())
 
     # compute mean diffs for each ablated edge
     ablated_edge_mean_diffs: dict[Edge, float] = {}
     for edge in edges:
         ablated_diffs = score_diffs(
             dataloader=task.train_loader,
-            outs_1=edge_outs_train[edge],
+            scores_1=edges_scores_train[edge],
             outs_2=circuit_outs_train[n_edges_min_equiv],
             grad_func=conf.grad_func,
             answer_func=conf.answer_func,
             model_outs=model_out_train,
             device=task.device
         )
-        ablated_edge_mean_diffs[edge] = t.cat(ablated_diffs).mean().item()
+        ablated_edge_mean_diffs[edge] = ablated_diffs.mean().item()
 
 
-# In[60]:
+# In[ ]:
 
 
 from auto_circuit_tests.hypo_tests.minimality_test import MinResult
@@ -1476,7 +1493,7 @@ if run_min_test:
         )
 
 
-# In[61]:
+# In[ ]:
 
 
 if run_min_test:
@@ -1512,7 +1529,7 @@ if run_min_test:
     fig.tight_layout()
 
 
-# In[62]:
+# In[ ]:
 
 
 # if run_min_test:
@@ -1535,7 +1552,7 @@ if run_min_test:
 
 # ### Minimality Test on "Ground Truth" Circuit
 
-# In[63]:
+# In[ ]:
 
 
 # if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func):
@@ -1561,38 +1578,38 @@ if run_min_test:
 #             model_outs=model_out_test,
 #             device=task.device
 #         )
-#         inflated_ablated_mean_diffs_true.append(t.cat(inflated_ablated_diffs).mean().item())
+#         inflated_ablated_mean_diffs_true.append(inflated_ablated_diffs.mean().item())
 
 
-# In[64]:
+# In[ ]:
 
 
-true_edges_min_test_path = out_answer_dir / "true_edges_min_test_results.json"
-if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func) and not true_edges_min_test_path.exists():
-    true_edges_min_test_results, null_rejected = minimality_test(
-        model=task.model, 
-        dataloader=task.test_loader,
-        edges=list(task.true_edges),
-        prune_scores=task.model.circuit_prune_scores(task.true_edges),
-        threshold=0.5,
-        grad_func=conf.grad_func,
-        answer_func=conf.answer_func,
-        ablation_type=conf.ablation_type,
-        token=task.token_circuit,
-        inflated_outs=inflated_outs_true,
-        ablated_outs=ablated_outs_true,
-        q_star=conf.q_star,
-        device=task.device,
-        stop_if_reject=True
-    )
-    save_json({edge_name(k): v for k, v in true_edges_min_test_results.items()}, out_answer_dir, "true_edges_min_test_results")
+# true_edges_min_test_path = out_answer_dir / "true_edges_min_test_results.json"
+# if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func) and not true_edges_min_test_path.exists():
+#     true_edges_min_test_results, null_rejected = minimality_test(
+#         model=task.model, 
+#         dataloader=task.test_loader,
+#         edges=list(task.true_edges),
+#         prune_scores=task.model.circuit_prune_scores(task.true_edges),
+#         threshold=0.5,
+#         grad_func=conf.grad_func,
+#         answer_func=conf.answer_func,
+#         ablation_type=conf.ablation_type,
+#         token=task.token_circuit,
+#         inflated_outs=inflated_outs_true,
+#         ablated_outs=ablated_outs_true,
+#         q_star=conf.q_star,
+#         device=task.device,
+#         stop_if_reject=True
+#     )
+#     save_json({edge_name(k): v for k, v in true_edges_min_test_results.items()}, out_answer_dir, "true_edges_min_test_results")
 
 
 # # Independence Test and Complement %Loss Recovered
 
 # ## % Loss Recovered of Complement Model
 
-# In[65]:
+# In[ ]:
 
 
 # get complement outs
@@ -1617,7 +1634,7 @@ complement_outs_test: CircuitOutputs = run_circuits(
 )
 
 
-# In[66]:
+# In[ ]:
 
 
 # get faithfulness metrics of complement
@@ -1625,9 +1642,9 @@ faith_metric_results_c_train, faith_metrics_c_train = compute_faith_metrics(
     task.train_loader,
     model_out_train, 
     ablated_out_train,
-    complement_outs_train,
     conf.grad_func,
     conf.answer_func,
+    circs_outs=complement_outs_train,
 )
 
 
@@ -1635,9 +1652,9 @@ faith_metric_results_c_test, faith_metrics_c_test = compute_faith_metrics(
     task.test_loader,
     model_out_test,
     ablated_out_test,
-    complement_outs_test,
     conf.grad_func,
     conf.answer_func,
+    circs_outs=complement_outs_test,
 )
 
 
@@ -1647,7 +1664,7 @@ save_json(faith_metric_results_c_test, edge_dir, "faith_metric_results_c_test")
 save_json(faith_metrics_c_test, edge_dir, "faith_metrics_c_test")
 
 
-# In[67]:
+# In[78]:
 
 
 # compute faithfulness metrics using eval functions
@@ -1656,18 +1673,18 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
         task.train_loader,
         model_out_train,
         ablated_out_train,
-        complement_outs_train,
         conf.eval_grad_func,
         conf.eval_answer_func,
+        circs_outs=complement_outs_train,
     )
 
     faith_metric_results_c_test_eval, faith_metrics_c_test_eval = compute_faith_metrics(
         task.test_loader,
         model_out_test,
         ablated_out_test,
-        complement_outs_test,
         conf.eval_grad_func,
         conf.eval_answer_func,
+        circs_outs=complement_outs_test,
     )
     save_json(faith_metric_results_c_train_eval, edge_dir, "faith_metric_results_c_train_eval")
     save_json(faith_metrics_c_train_eval, edge_dir, "faith_metrics_c_train_eval")
@@ -1706,13 +1723,13 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
 # 
 # 
 
-# In[68]:
+# In[79]:
 
 
 from auto_circuit_tests.hypo_tests.indep_test import independence_tests
 
 
-# In[69]:
+# In[ ]:
 
 
 indep_results_train = independence_tests(
@@ -1730,7 +1747,7 @@ indep_results_train = independence_tests(
 save_json(indep_results_train, edge_dir, "indep_results_train")
 
 
-# In[70]:
+# In[ ]:
 
 
 indep_results_test = independence_tests(
@@ -1782,7 +1799,7 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
     save_json(indep_results_test_eval, edge_dir, "indep_results_test_eval")
 
 
-# In[72]:
+# In[ ]:
 
 
 # plot % loss recovered and indep test results
@@ -1796,7 +1813,7 @@ fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
 fig.savefig(edge_dir / "frac_loss_recovered_and_indep_test_results_train.png")
 
 
-# In[73]:
+# In[ ]:
 
 
 # plot % loss recovered and indep test results
@@ -1840,7 +1857,7 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
 
 # ### Run Independence Test on True Edges
 
-# In[76]:
+# In[ ]:
 
 
 indep_true_edge_results_path = out_answer_dir / "indep_true_edge_results.json"
