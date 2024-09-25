@@ -1438,12 +1438,6 @@ if run_min_test:
     )
 
 
-# In[ ]:
-
-
-type(ablated_outs)
-
-
 # In[72]:
 
 
