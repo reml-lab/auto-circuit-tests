@@ -19,12 +19,12 @@ def is_notebook() -> bool:
 
 import os
 if is_notebook():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "4" #"1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0" #"1"
     # os.environ['CUDA_LAUNCH_BLOCKING']="1"
     # os.environ['TORCH_USE_CUDA_DSA'] = "1"
 
 
-# In[ ]:
+# In[2]:
 
 
 import torch 
@@ -42,7 +42,7 @@ torch.cuda.is_available()
 # 
 # 
 
-# In[ ]:
+# In[3]:
 
 
 import os
@@ -205,7 +205,7 @@ task_dir, ablation_dir, out_answer_dir, ps_dir, edge_dir, exp_dir = get_exp_dir(
 exp_dir.mkdir(parents=True, exist_ok=True)
 
 
-# In[ ]:
+# In[7]:
 
 
 # initialize task
@@ -270,14 +270,13 @@ if conf.prune_algo == PruneAlgo.CIRC_PROBE and conf.answer_func == AnswerFunc.KL
 
 # ## Activation Patching Prune Scores
 
-# In[ ]:
+# In[10]:
 
 
 # load from cache if exists 
 act_ps_path = out_answer_dir / "act_patch_prune_scores.pt"
 if act_ps_path.exists():
-    act_prune_scores = torch.load(act_ps_path)
-    act_prune_scores = {mod_name: score for mod_name, score in act_prune_scores.items()} # negative b/c high score should imply large drop in performance
+    act_prune_scores = torch.load(act_ps_path, map_location="cpu")
 else:
     act_prune_scores = None
 
@@ -312,6 +311,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH:
         layers=max_layer if conf.layerwise else None,
         clean_corrupt=conf.clean_corrupt,
     )
+    attr_prune_scores = {mod_name: score.to("cpu") for mod_name, score in attr_prune_scores.items()}
     if conf.save_cache:
         torch.save(attr_prune_scores, attr_ps_path)
 
@@ -619,7 +619,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
 
 # Constructing circuits from prune scores using either edge or fraction of prune score thresholds
 
-# In[14]:
+# In[25]:
 
 
 # set prune scores
@@ -637,7 +637,7 @@ prune_scores = {mod_name: score.to(task.device) for mod_name, score in prune_sco
 sorted_prune_scores = desc_prune_scores(prune_scores)
 
 
-# In[15]:
+# In[26]:
 
 
 # plot prune scores
@@ -657,7 +657,7 @@ plt.savefig(ps_dir / "edge_scores.png")
 plt.close()
 
 
-# In[ ]:
+# In[27]:
 
 
 # compute n_edges 
@@ -688,7 +688,7 @@ save_json(circ_edges, edge_dir, "n_circ_edges")
 # - frac mean difference recovered: E[score(C)] - E[score(A)] / E[score(M)] - E[score(A)] 
 # (SAE work, similar to causal scrubbing, don't need to worry about variance)
 
-# In[ ]:
+# In[28]:
 
 
 # first full model outt and ablated model out
@@ -716,7 +716,7 @@ ablated_out_test: BatchOutputs = run_fully_ablated_model(
 )
 
 
-# In[ ]:
+# In[29]:
 
 
 # next get circuit outs for each threshold
@@ -751,19 +751,19 @@ circuit_outs_test = dict(circuit_outs_test)
 # - mean difference: E[score(M)] - E[score(C)] 
 # - frac mean difference recovered: E[score(C)] - E[score(A)] / E[score(M)] - E[score(A)]
 
-# In[ ]:
+# In[30]:
 
 
 [batch.key for batch in task.train_loader], [k for k in model_out_train.keys()], 
 
 
-# In[ ]:
+# In[31]:
 
 
 [[k for k in out.keys()] for out in circuit_outs_train.values()]
 
 
-# In[ ]:
+# In[32]:
 
 
 faith_metric_results_train, faith_metrics_train = compute_faith_metrics(
@@ -790,7 +790,7 @@ save_json(faith_metric_results_test, edge_dir, "faith_metric_results_test")
 save_json(faith_metrics_test, edge_dir, "faith_metrics_test")
 
 
-# In[38]:
+# In[33]:
 
 
 # faith metrics eval 
@@ -820,7 +820,7 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
 
 # ## Equivalence Tests
 
-# In[ ]:
+# In[34]:
 
 
 use_eval_metrics = conf.answer_func in DIV_ANSWER_FUNCS
@@ -858,7 +858,7 @@ save_json(equiv_test_results_test, edge_dir, "equiv_test_results_test")
 
 # ## Plot % loss recovered and Equiv Test Results Along Frac Edges / Frac Prune Scores
 
-# In[40]:
+# In[35]:
 
 
 import matplotlib.pyplot as plt
@@ -934,7 +934,7 @@ def plot_frac_loss_recovered_and_equiv_test_results(
     return fig, ax
 
 
-# In[41]:
+# In[36]:
 
 
 # plot results using div answer function (no equivalence results)
@@ -950,7 +950,7 @@ if use_eval_metrics:
     plt.close()
 
 
-# In[42]:
+# In[37]:
 
 
 # plot results using div answer function (no equivalence results)
@@ -965,7 +965,7 @@ if use_eval_metrics:
     plt.close()
 
 
-# In[43]:
+# In[38]:
 
 
 # TODO: figure out why this plotting is off
@@ -981,7 +981,7 @@ fig.savefig(edge_dir / "frac_loss_recovered_and_equiv_test_results_train.png")
 plt.close()
 
 
-# In[44]:
+# In[39]:
 
 
 fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
@@ -999,13 +999,13 @@ plt.close()
 
 # ## Find Smallest Equivalent Circuit
 
-# In[45]:
+# In[40]:
 
 
 flat_ps = flat_prune_scores_ordered(prune_scores, order=prune_scores.keys())
 
 
-# In[ ]:
+# In[41]:
 
 
 # find smallest equiv circuit on training distribution
@@ -1024,7 +1024,7 @@ edges = edges_from_mask(task.model.srcs, task.model.dests, edge_mask, task.token
 save_json([(edge.seq_idx, edge.name) for edge in  edges], edge_dir, "min_equiv_edges_train")
 
 
-# In[47]:
+# In[42]:
 
 
 valid_task = TASK_TO_OUTPUT_ANSWER_FUNCS[conf.task] == (conf.grad_func, conf.answer_func) or conf.answer_func in DIV_ANSWER_FUNCS
@@ -1033,7 +1033,7 @@ test_smallest = valid_task and len(edges) < 20_000
 
 # ## Plot Pruned Smallest Equivalent Circuit
 
-# In[41]:
+# In[43]:
 
 
 if test_smallest:
@@ -1053,7 +1053,7 @@ if test_smallest:
 # 
 # Note: Seems like there is some leakage, not exactly sure why, but I guess its fine, not using this anyway
 
-# In[ ]:
+# In[44]:
 
 
 if test_smallest:
@@ -1084,7 +1084,7 @@ if test_smallest:
 
 # ### Verify Pruned Smallest Circuit Still Equivalent and achieves >95% loss recovered
 
-# In[ ]:
+# In[45]:
 
 
 if test_smallest:
@@ -1116,7 +1116,7 @@ if test_smallest:
     used_edges_out = run_circuit_from_mask(used_edges_mask, task.train_loader)
 
 
-# In[ ]:
+# In[46]:
 
 
 if test_smallest:
@@ -1133,7 +1133,7 @@ if test_smallest:
     save_json(faith_metric_results_used_edges, edge_dir, "faith_metric_results_used_edges")
 
 
-# In[ ]:
+# In[47]:
 
 
 # run equiv tests on used edges
@@ -1165,7 +1165,7 @@ run_min_test = test_smallest
 
 # ### Compute Scores after  Ablating Each Edge
 
-# In[ ]:
+# In[49]:
 
 
 if run_min_test:
@@ -1196,7 +1196,7 @@ if run_min_test:
 
 # ### Compute Change in %loss recovered
 
-# In[ ]:
+# In[50]:
 
 
 if run_min_test:
@@ -1224,7 +1224,7 @@ if run_min_test:
     save_json({edge_name(k): v for k, v in edge_faith_metrics_test.items()}, edge_dir, "edge_faith_metrics_test")
 
 
-# In[57]:
+# In[51]:
 
 
 if run_min_test:
@@ -1260,7 +1260,7 @@ if run_min_test:
 
 # ### Compute Activation Patching Scores on Circuit and Correlation Between Activation Patching Scores on Full Model
 
-# In[58]:
+# In[52]:
 
 
 if run_min_test:
@@ -1315,7 +1315,7 @@ if run_min_test:
     )
 
 
-# In[ ]:
+# In[53]:
 
 
 # compute correlation
@@ -1341,7 +1341,7 @@ if run_min_test:
 
 # ### Minimality Test
 
-# In[61]:
+# In[54]:
 
 
 if run_min_test:
@@ -1349,7 +1349,7 @@ if run_min_test:
     graph = SeqGraph(task.model.edges, token=task.token_circuit, attn_only=task.model.cfg.attn_only)
 
 
-# In[ ]:
+# In[55]:
 
 
 if run_min_test:
@@ -1359,7 +1359,7 @@ if run_min_test:
         visualize_graph(graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, column_width=5, figsize=(36, 24))
 
 
-# In[ ]:
+# In[56]:
 
 
 # plot circuit graph
@@ -1370,7 +1370,7 @@ if run_min_test:
         visualize_graph(circ_graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, column_width=10, figsize=(72, 24))
 
 
-# In[ ]:
+# In[57]:
 
 
 # sample paths from complement for each data instance
@@ -1385,7 +1385,7 @@ if run_min_test:
     novel_edge_paths = [[edge for edge in path if edge not in edges_set] for path in sampled_paths]
 
 
-# In[ ]:
+# In[58]:
 
 
 if run_min_test:
@@ -1404,7 +1404,7 @@ if run_min_test:
         visualize_graph(ex_inflated_graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, edge_colors=edge_colors)
 
 
-# In[ ]:
+# In[59]:
 
 
 # sample paths to remove 
@@ -1421,7 +1421,7 @@ if run_min_test:
         visualize_graph(ex_inflated_graph, sort_by_head=False, max_layer=None, seq_idxs=seq_idxs, edge_colors=edge_colors)
 
 
-# In[ ]:
+# In[60]:
 
 
 if run_min_test:
@@ -1438,7 +1438,7 @@ if run_min_test:
     )
 
 
-# In[72]:
+# In[61]:
 
 
 if run_min_test:
@@ -1471,7 +1471,7 @@ if run_min_test:
         ablated_edge_mean_diffs[edge] = ablated_diffs.mean().item()
 
 
-# In[ ]:
+# In[62]:
 
 
 from auto_circuit_tests.hypo_tests.minimality_test import MinResult
@@ -1487,7 +1487,7 @@ if run_min_test:
         )
 
 
-# In[ ]:
+# In[63]:
 
 
 if run_min_test:
@@ -1523,7 +1523,7 @@ if run_min_test:
     fig.tight_layout()
 
 
-# In[ ]:
+# In[64]:
 
 
 # if run_min_test:
@@ -1546,7 +1546,7 @@ if run_min_test:
 
 # ### Minimality Test on "Ground Truth" Circuit
 
-# In[ ]:
+# In[65]:
 
 
 # if TASK_TO_OUTPUT_ANSWER_FUNCS[task.key] == (conf.grad_func, conf.answer_func):
@@ -1575,7 +1575,7 @@ if run_min_test:
 #         inflated_ablated_mean_diffs_true.append(inflated_ablated_diffs.mean().item())
 
 
-# In[ ]:
+# In[66]:
 
 
 # true_edges_min_test_path = out_answer_dir / "true_edges_min_test_results.json"
@@ -1603,7 +1603,7 @@ if run_min_test:
 
 # ## % Loss Recovered of Complement Model
 
-# In[ ]:
+# In[67]:
 
 
 # get complement outs
