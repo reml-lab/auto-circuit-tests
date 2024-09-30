@@ -291,7 +291,7 @@ else:
 # In[11]:
 
 
-if conf.prune_algo != PruneAlgo.ACT_PATCH:
+if conf.prune_algo == PruneAlgo.ATTR_PATCH:
     attr_ps_name = "attrib_patch_prune_scores"
     attr_ps_path = (ps_dir / attr_ps_name).with_suffix(".pt")
     # if (attr_ps_path).exists():
@@ -321,7 +321,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH:
 # In[12]:
 
 
-if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
+if conf.prune_algo != PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     # order = sorted(list(act_prune_scores.keys()), key=lambda x: int(x.split('.')[1]))
     order = list(act_prune_scores.keys())
     act_prune_scores_flat = flat_prune_scores_ordered(act_prune_scores, order=order)
@@ -334,7 +334,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
 
 
 # mse and median se
-if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
+if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     mse_result_name = "act_attr_mse"
     mse_result_path = (ps_dir / mse_result_name).with_suffix(".json")
     if mse_result_path.exists():
@@ -360,7 +360,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
 # In[14]:
 
 
-if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
+if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     from scipy import stats 
     abs_corr, abs_p_value = stats.spearmanr(act_prune_scores_flat.abs().cpu(), attr_prune_scores_flat.abs().cpu())
     corr, p_value = stats.spearmanr(act_prune_scores_flat.cpu(), attr_prune_scores_flat.cpu())
@@ -382,7 +382,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
 
 
 # get rank for scores
-if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
+if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     act_prune_scores_rank = get_el_rank(act_prune_scores_flat.cpu())
     attr_prune_scores_rank = get_el_rank(attr_prune_scores_flat.cpu())
 
@@ -394,7 +394,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
 # In[16]:
 
 
-if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
+if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     # TODO: plot x=0
     plt.scatter(act_prune_scores_rank, attr_prune_scores_rank, s=0.1)
     # plot min rank, max rank as vertical lines
@@ -416,7 +416,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
 
 # TODO: I think there must be a bug? 
 # get rank for scores
-if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
+if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     act_prune_scores_abs_rank = get_el_rank(act_prune_scores_flat.abs().cpu())
     attr_prune_scores_abs_rank = get_el_rank(attr_prune_scores_flat.abs().cpu())
 
@@ -441,7 +441,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
 # In[18]:
 
 
-if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
+if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     num_missigned = (act_prune_scores_flat.sign() != attr_prune_scores_flat.sign()).sum()
     frac_missigned = num_missigned / len(act_prune_scores_flat)
     print(f"Fraction of missigned: {frac_missigned}")
@@ -454,7 +454,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
 
 
 # for different edge thresholds, compute fraction of edges not included in top k
-if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
+if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     edge_counts = edge_counts_util(task.model.edges, conf.edge_counts, zero_edges=True)
 
     frac_edges_recovered: Dict[int, float] = {}
@@ -497,7 +497,7 @@ def mod_name_to_layer_and_node_type(mod_name: str) -> Tuple[int, NodeType]:
 # In[21]:
 
 
-if conf.prune_algo != PruneAlgo.ACT_PATCH:
+if conf.prune_algo == PruneAlgo.ATTR_PATCH:
     from auto_circuit_tests.edge_graph import NodeType
     # compute ranking by flatten by order, including module name 
     def prune_score_rankings_by_component(
@@ -523,7 +523,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH:
 # In[22]:
 
 
-if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
+if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     import matplotlib.pyplot as plt
     import numpy as np
 
@@ -590,7 +590,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
 # In[23]:
 
 
-if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
+if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     # plot scores on x, y
     plt.scatter(act_prune_scores_flat.cpu(), attr_prune_scores_flat.cpu(), alpha=0.25)
     plt.xlabel("Act Patch Scores")
@@ -604,7 +604,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
 # In[24]:
 
 
-if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
+if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     # plot scores on x, y
     plt.scatter(act_prune_scores_flat.abs().cpu(), attr_prune_scores_flat.abs().cpu(), alpha=0.25)
     plt.xlabel("Act Patch Scores")
