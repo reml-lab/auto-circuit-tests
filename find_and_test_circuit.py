@@ -321,7 +321,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH:
 # In[12]:
 
 
-if conf.prune_algo != PruneAlgo.ACT_PATCH:
+if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
     # order = sorted(list(act_prune_scores.keys()), key=lambda x: int(x.split('.')[1]))
     order = list(act_prune_scores.keys())
     act_prune_scores_flat = flat_prune_scores_ordered(act_prune_scores, order=order)
@@ -382,7 +382,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
 
 
 # get rank for scores
-if conf.prune_algo != PruneAlgo.ACT_PATCH:
+if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
     act_prune_scores_rank = get_el_rank(act_prune_scores_flat.cpu())
     attr_prune_scores_rank = get_el_rank(attr_prune_scores_flat.cpu())
 
@@ -394,7 +394,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH:
 # In[16]:
 
 
-if conf.prune_algo != PruneAlgo.ACT_PATCH:
+if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
     # TODO: plot x=0
     plt.scatter(act_prune_scores_rank, attr_prune_scores_rank, s=0.1)
     # plot min rank, max rank as vertical lines
@@ -416,7 +416,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH:
 
 # TODO: I think there must be a bug? 
 # get rank for scores
-if conf.prune_algo != PruneAlgo.ACT_PATCH:
+if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
     act_prune_scores_abs_rank = get_el_rank(act_prune_scores_flat.abs().cpu())
     attr_prune_scores_abs_rank = get_el_rank(attr_prune_scores_flat.abs().cpu())
 
@@ -454,7 +454,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
 
 
 # for different edge thresholds, compute fraction of edges not included in top k
-if conf.prune_algo != PruneAlgo.ACT_PATCH:
+if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
     edge_counts = edge_counts_util(task.model.edges, conf.edge_counts, zero_edges=True)
 
     frac_edges_recovered: Dict[int, float] = {}
@@ -523,7 +523,7 @@ if conf.prune_algo != PruneAlgo.ACT_PATCH:
 # In[22]:
 
 
-if conf.prune_algo != PruneAlgo.ACT_PATCH:
+if conf.prune_algo != PruneAlgo.ACT_PATCH and act_prune_scores is not None:
     import matplotlib.pyplot as plt
     import numpy as np
 
