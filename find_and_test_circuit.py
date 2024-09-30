@@ -136,12 +136,12 @@ from auto_circuit_tests.utils.utils import get_exp_dir
 from dataclasses import dataclass, field
 @dataclass 
 class Config: 
-    task: str = "Indirect Object Identification Component Circuit" # check how many edges in component circuit (probably do all but ioi toen)
+    task: str = "Docstring Token Circuit" # check how many edges in component circuit (probably do all but ioi toen)
     ablation_type: AblationType = AblationType.RESAMPLE
-    grad_func: GradFunc = GradFunc.LOGIT
-    answer_func: AnswerFunc = AnswerFunc.MAX_DIFF
+    grad_func: GradFunc = GradFunc.LOGPROB
+    answer_func: AnswerFunc = AnswerFunc.KL_DIV
     eval_grad_func: Optional[GradFunc] = None # TODO: used to evaluate faithfulness
-    prune_algo: PruneAlgo = PruneAlgo.ATTR_PATCH
+    prune_algo: PruneAlgo = PruneAlgo.CIRC_PROBE
     eval_answer_func: Optional[AnswerFunc] = None
     ig_samples: Optional[int] = 50
     layerwise: bool = True
@@ -244,28 +244,28 @@ if conf.prune_algo == PruneAlgo.ACDC:
 
 # ## Circuit Probing Prune Scores
 
-# In[9]:
+# In[14]:
 
 
 if conf.prune_algo == PruneAlgo.CIRC_PROBE and conf.answer_func == AnswerFunc.KL_DIV:
     circ_probe_ps_path = out_answer_dir / "circ_probe_prune_scores.pkl"
-    if circ_probe_ps_path.exists():
-        circ_probe_prune_scores = torch.load(circ_probe_ps_path)
-    else:
-        circ_probe_prune_scores = circuit_probing_prune_scores(
-            model=task.model, 
-            dataloader=task.train_loader, 
-            official_edges=None,
-            tree_optimisation=True,
-            faithfulness_target=conf.answer_func.value, 
-            circuit_sizes=[10, 100],#edge_counts_util(task.model.edges, conf.edge_counts, all_edges=False),
-            learning_rate=0.1,
-            epochs=100, 
-            regularize_lambda=0.1, 
-            show_train_graph=False
-        )
-        if conf.save_cache:
-            torch.save(circ_probe_prune_scores, circ_probe_ps_path)
+    # if circ_probe_ps_path.exists():
+    #     circ_probe_prune_scores = torch.load(circ_probe_ps_path)
+    # else:
+    circ_probe_prune_scores = circuit_probing_prune_scores(
+        model=task.model, 
+        dataloader=task.train_loader, 
+        official_edges=None,
+        tree_optimisation=True,
+        faithfulness_target=conf.answer_func.value, 
+        circuit_sizes=edge_counts_util(task.model.edges, conf.edge_counts, zero_edges=False),
+        learning_rate=0.1,
+        epochs=100, 
+        regularize_lambda=0.1, 
+        show_train_graph=True,
+    )
+    if conf.save_cache:
+        torch.save(circ_probe_prune_scores, circ_probe_ps_path)
 
 
 # ## Activation Patching Prune Scores
@@ -619,7 +619,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
 
 # Constructing circuits from prune scores using either edge or fraction of prune score thresholds
 
-# In[25]:
+# In[15]:
 
 
 # set prune scores
@@ -657,7 +657,7 @@ plt.savefig(ps_dir / "edge_scores.png")
 plt.close()
 
 
-# In[27]:
+# In[16]:
 
 
 # compute n_edges 
@@ -669,8 +669,12 @@ if conf.prune_algo == PruneAlgo.ACDC:
         for tao in taos
     ]
      circ_thresholds = taos[1:] + [t.inf] # prune scores set to tau if change less than tau
+elif conf.prune_algo == PruneAlgo.CIRC_PROBE:
+     # get size of each circuit and thresholds 
+    circ_edges = edge_counts_util(task.model.edges, prune_scores=prune_scores, zero_edges=False)
+    circ_thresholds = [sorted_prune_scores[n_edges-1].item() for n_edges in circ_edges]
 else:
-    circ_edges = edge_counts_util(task.model.edges, conf.edge_counts, zero_edges=True)
+    circ_edges = edge_counts_util(task.model.edges, conf.edge_counts, zero_edges=False)
     circ_thresholds = [sorted_prune_scores[n_edges-1].item() for n_edges in circ_edges]
 
 save_json(circ_edges, edge_dir, "n_circ_edges")
