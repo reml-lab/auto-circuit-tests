@@ -141,7 +141,7 @@ class Config:
     grad_func: GradFunc = GradFunc.LOGPROB
     answer_func: AnswerFunc = AnswerFunc.KL_DIV
     eval_grad_func: Optional[GradFunc] = None # TODO: used to evaluate faithfulness
-    prune_algo: PruneAlgo = PruneAlgo.CIRC_PROBE
+    prune_algo: PruneAlgo = PruneAlgo.ACDC
     eval_answer_func: Optional[AnswerFunc] = None
     ig_samples: Optional[int] = 50
     layerwise: bool = True
@@ -244,7 +244,7 @@ if conf.prune_algo == PruneAlgo.ACDC:
 
 # ## Circuit Probing Prune Scores
 
-# In[14]:
+# In[9]:
 
 
 if conf.prune_algo == PruneAlgo.CIRC_PROBE and conf.answer_func == AnswerFunc.KL_DIV:
@@ -619,7 +619,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
 
 # Constructing circuits from prune scores using either edge or fraction of prune score thresholds
 
-# In[15]:
+# In[25]:
 
 
 # set prune scores
@@ -654,10 +654,10 @@ def plot_prune_scores(edge_scores):
 
 fig, ax = plot_prune_scores(sorted_prune_scores.cpu().numpy().tolist())
 plt.savefig(ps_dir / "edge_scores.png")
-plt.close()
+# plt.close()
 
 
-# In[16]:
+# In[27]:
 
 
 # compute n_edges 
@@ -755,19 +755,19 @@ circuit_outs_test = dict(circuit_outs_test)
 # - mean difference: E[score(M)] - E[score(C)] 
 # - frac mean difference recovered: E[score(C)] - E[score(A)] / E[score(M)] - E[score(A)]
 
-# In[ ]:
+# In[30]:
 
 
 [batch.key for batch in task.train_loader], [k for k in model_out_train.keys()], 
 
 
-# In[ ]:
+# In[31]:
 
 
 [[k for k in out.keys()] for out in circuit_outs_train.values()]
 
 
-# In[ ]:
+# In[32]:
 
 
 faith_metric_results_train, faith_metrics_train = compute_faith_metrics(
@@ -824,7 +824,7 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
 
 # ## Equivalence Tests
 
-# In[ ]:
+# In[34]:
 
 
 use_eval_metrics = conf.answer_func in DIV_ANSWER_FUNCS
@@ -1009,7 +1009,7 @@ plt.close()
 flat_ps = flat_prune_scores_ordered(prune_scores, order=prune_scores.keys())
 
 
-# In[ ]:
+# In[41]:
 
 
 # find smallest equiv circuit on training distribution
@@ -1040,7 +1040,7 @@ test_smallest = valid_task and len(edges) < 20_000
 # In[43]:
 
 
-if test_smallest:
+if test_smallest and not conf.prune_algo == PruneAlgo.ACDC:
     fig = draw_seq_graph(
         model=task.model,
         prune_scores=prune_scores,
@@ -1057,7 +1057,7 @@ if test_smallest:
 # 
 # Note: Seems like there is some leakage, not exactly sure why, but I guess its fine, not using this anyway
 
-# In[ ]:
+# In[44]:
 
 
 if test_smallest:
@@ -1088,7 +1088,7 @@ if test_smallest:
 
 # ### Verify Pruned Smallest Circuit Still Equivalent and achieves >95% loss recovered
 
-# In[ ]:
+# In[45]:
 
 
 if test_smallest:
@@ -1120,7 +1120,7 @@ if test_smallest:
     used_edges_out = run_circuit_from_mask(used_edges_mask, task.train_loader)
 
 
-# In[ ]:
+# In[46]:
 
 
 if test_smallest:
@@ -1137,7 +1137,7 @@ if test_smallest:
     save_json(faith_metric_results_used_edges, edge_dir, "faith_metric_results_used_edges")
 
 
-# In[ ]:
+# In[47]:
 
 
 # run equiv tests on used edges
@@ -1169,7 +1169,7 @@ run_min_test = test_smallest
 
 # ### Compute Scores after  Ablating Each Edge
 
-# In[ ]:
+# In[49]:
 
 
 if run_min_test:
