@@ -136,15 +136,15 @@ from auto_circuit_tests.utils.utils import get_exp_dir
 from dataclasses import dataclass, field
 @dataclass 
 class Config: 
-    task: str = "Docstring Token Circuit" # check how many edges in component circuit (probably do all but ioi toen)
+    task: str = "Indirect Object Identification Token Circuit" # check how many edges in component circuit (probably do all but ioi toen)
     ablation_type: AblationType = AblationType.RESAMPLE
     grad_func: GradFunc = GradFunc.LOGPROB
     answer_func: AnswerFunc = AnswerFunc.KL_DIV
     eval_grad_func: Optional[GradFunc] = None # TODO: used to evaluate faithfulness
-    prune_algo: PruneAlgo = PruneAlgo.ACDC
+    prune_algo: PruneAlgo = PruneAlgo.ATTR_PATCH
     eval_answer_func: Optional[AnswerFunc] = None
     ig_samples: Optional[int] = 50
-    layerwise: bool = True
+    layerwise: bool = False
     edge_counts: EdgeCounts = EdgeCounts.LOGARITHMIC
     tao_bases: list[float] = field(default_factory=lambda: [1, 5])
     tao_exps: list[float] = field(default_factory=lambda: list(range(-5, -1)))
@@ -205,11 +205,15 @@ task_dir, ablation_dir, out_answer_dir, ps_dir, edge_dir, exp_dir = get_exp_dir(
 exp_dir.mkdir(parents=True, exist_ok=True)
 
 
-# In[7]:
+# In[9]:
 
 
 # initialize task
 task = TASK_DICT[conf.task]
+# IOI model is bigger, need smaller batch size to fit on A4000
+if "Indirect Object Identification" in task.key:
+    task.batch_size = 32 # int(task.batch_size / 2) 
+    task.batch_count = 8 # int(task.batch_count * 2)
 task.shuffle = False
 task.init_task()
 
@@ -288,7 +292,13 @@ else:
 
 # ##  Attribution Patching Prune Scores
 
-# In[11]:
+# In[9]:
+
+
+task.batch_size
+
+
+# In[10]:
 
 
 if conf.prune_algo == PruneAlgo.ATTR_PATCH:
