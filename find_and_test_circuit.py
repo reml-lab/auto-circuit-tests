@@ -262,7 +262,7 @@ if conf.prune_algo == PruneAlgo.CIRC_PROBE and conf.answer_func == AnswerFunc.KL
         learning_rate=0.1,
         epochs=100, 
         regularize_lambda=0.1, 
-        show_train_graph=True,
+        show_train_graph=is_notebook(),
     )
     if conf.save_cache:
         torch.save(circ_probe_prune_scores, circ_probe_ps_path)
