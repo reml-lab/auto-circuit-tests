@@ -1168,7 +1168,7 @@ if test_smallest:
     save_json(equiv_test_results_used_edges, edge_dir, "equiv_test_results_used_edges")
 
 
-# ## Minimality Test and Change in %loss Recovered
+# ## Minimality Test, Change in %loss Recovered, and Act Patch Full Model vs Circuit Correlation
 
 # In[48]:
 
@@ -1334,7 +1334,7 @@ if run_min_test:
 
 # compute correlation
 # TODO: compute actual activation patching scores for circuit, compute actual correlation
-if run_min_test:
+if run_min_test and act_prune_scores is not None:
     # plot correlation between minimality score (change in score) and prune score 
     edge_act_prune_scores_flat = [act_prune_scores[edge.dest.module_name][edge.patch_idx].item() for edge in edges]
     edge_circ_act_prune_scores_flat = [edge_circ_act_prune_scores[edge.dest.module_name][edge.patch_idx].item() for edge in edges]
