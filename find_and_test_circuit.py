@@ -507,7 +507,7 @@ def mod_name_to_layer_and_node_type(mod_name: str) -> Tuple[int, NodeType]:
 # In[21]:
 
 
-if conf.prune_algo == PruneAlgo.ATTR_PATCH:
+if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     from auto_circuit_tests.edge_graph import NodeType
     # compute ranking by flatten by order, including module name 
     def prune_score_rankings_by_component(
