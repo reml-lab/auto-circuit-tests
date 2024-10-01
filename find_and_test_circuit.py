@@ -129,22 +129,22 @@ from auto_circuit_tests.utils.utils import (
 from auto_circuit_tests.utils.utils import get_exp_dir
 
 
-# In[4]:
+# In[5]:
 
 
 # config class
 from dataclasses import dataclass, field
 @dataclass 
 class Config: 
-    task: str = "Indirect Object Identification Token Circuit" # check how many edges in component circuit (probably do all but ioi toen)
-    ablation_type: AblationType = AblationType.RESAMPLE
+    task: str = "Docstring Component Circuit" # check how many edges in component circuit (probably do all but ioi toen)
+    ablation_type: AblationType = AblationType.TOKENWISE_MEAN_CLEAN
     grad_func: GradFunc = GradFunc.LOGPROB
     answer_func: AnswerFunc = AnswerFunc.KL_DIV
     eval_grad_func: Optional[GradFunc] = None # TODO: used to evaluate faithfulness
     prune_algo: PruneAlgo = PruneAlgo.ATTR_PATCH
     eval_answer_func: Optional[AnswerFunc] = None
-    ig_samples: Optional[int] = 50
-    layerwise: bool = False
+    ig_samples: Optional[int] = 2
+    layerwise: bool = True
     edge_counts: EdgeCounts = EdgeCounts.LOGARITHMIC
     tao_bases: list[float] = field(default_factory=lambda: [1, 5])
     tao_exps: list[float] = field(default_factory=lambda: list(range(-5, -1)))
@@ -173,7 +173,7 @@ class Config:
                 self.eval_answer_func = AnswerFunc.MAX_DIFF
 
 
-# In[5]:
+# In[6]:
 
 
 # initialize config 
@@ -185,7 +185,7 @@ if not is_notebook():
     conf = Config(**conf_dict)
 
 
-# In[6]:
+# In[7]:
 
 
 # handle directories
@@ -205,7 +205,7 @@ task_dir, ablation_dir, out_answer_dir, ps_dir, edge_dir, exp_dir = get_exp_dir(
 exp_dir.mkdir(parents=True, exist_ok=True)
 
 
-# In[9]:
+# In[8]:
 
 
 # initialize task
@@ -222,7 +222,7 @@ task.init_task()
 
 # ## ACDC Prune Scores
 
-# In[8]:
+# In[9]:
 
 
 if conf.prune_algo == PruneAlgo.ACDC:
@@ -248,7 +248,7 @@ if conf.prune_algo == PruneAlgo.ACDC:
 
 # ## Circuit Probing Prune Scores
 
-# In[9]:
+# In[10]:
 
 
 if conf.prune_algo == PruneAlgo.CIRC_PROBE and conf.answer_func == AnswerFunc.KL_DIV:
@@ -274,7 +274,7 @@ if conf.prune_algo == PruneAlgo.CIRC_PROBE and conf.answer_func == AnswerFunc.KL
 
 # ## Activation Patching Prune Scores
 
-# In[10]:
+# In[11]:
 
 
 # load from cache if exists 
@@ -292,13 +292,7 @@ else:
 
 # ##  Attribution Patching Prune Scores
 
-# In[9]:
-
-
-task.batch_size
-
-
-# In[10]:
+# In[14]:
 
 
 if conf.prune_algo == PruneAlgo.ATTR_PATCH:
@@ -328,7 +322,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH:
 
 # ##  Compare Activation and Attribution Patching
 
-# In[12]:
+# In[15]:
 
 
 if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
@@ -340,7 +334,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
 
 # ### MSE
 
-# In[13]:
+# In[16]:
 
 
 # mse and median se
@@ -367,7 +361,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
 
 # ### Spearman Rank Correlation
 
-# In[14]:
+# In[17]:
 
 
 if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
@@ -388,7 +382,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
 
 # ### Plot Rank 
 
-# In[15]:
+# In[20]:
 
 
 # get rank for scores
@@ -398,27 +392,30 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
 
     act_prune_scores_0 = (act_prune_scores_flat == 0).cpu()
     act_prune_scores_0_rank = act_prune_scores_rank[act_prune_scores_0]
-    min_0_rank, max_0_rank = act_prune_scores_0_rank.min().item(), act_prune_scores_0_rank.max().item()
+    min_0_rank, max_0_rank = None, None
+    if len(act_prune_scores_0_rank) > 0:
+        min_0_rank, max_0_rank = act_prune_scores_0_rank.min().item(), act_prune_scores_0_rank.max().item()
 
 
-# In[16]:
+# In[22]:
 
 
 if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     # TODO: plot x=0
     plt.scatter(act_prune_scores_rank, attr_prune_scores_rank, s=0.1)
     # plot min rank, max rank as vertical lines
-    plt.axvline(min_0_rank, color='blue', linestyle='--')
-    plt.axvline(max_0_rank, color='blue', linestyle='--')
-    # shade area between min and max rank
-    plt.axvspan(min_0_rank, max_0_rank, color='lightblue', alpha=0.5)
+    if min_0_rank is not None:
+        plt.axvline(min_0_rank, color='blue', linestyle='--')
+        plt.axvline(max_0_rank, color='blue', linestyle='--')
+        # shade area between min and max rank
+        plt.axvspan(min_0_rank, max_0_rank, color='lightblue', alpha=0.5)
     
     plt.xlabel("Act Patch Rank")
     plt.ylabel("Attrib Patch Rank")
     plt.title("Rank Correlation")
 
     plt.savefig(ps_dir / "rank_corr.png")
-    plt.close()
+    # plt.close()
 
 
 # In[17]:
@@ -1278,6 +1275,7 @@ if run_min_test:
 
 
 if run_min_test:
+    #TODO: make sure signs are right and mean is correct
     from auto_circuit.prune_algos.utils import compute_loss 
     def compute_full_model_score(
         model: PatchableModel,
