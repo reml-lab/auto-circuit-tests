@@ -42,8 +42,8 @@ ANSWER_FUNC_DICT = {
     AnswerFunc.MAX_DIFF: batch_answer_max_diffs,
     AnswerFunc.AVG_VAL: batch_answer_vals,
     AnswerFunc.MSE: lambda vals, batch: t.nn.functional.mse_loss(vals, batch.answers),
-    AnswerFunc.KL_DIV: batch_kl_divs,
-    AnswerFunc.JS_DIV: batch_js_divs
+    AnswerFunc.KL_DIV: lambda input, target: -batch_kl_divs(input, target), # negative because we want to maximize
+    AnswerFunc.JS_DIV: lambda input, target: -batch_js_divs(input, target)
 }
 
 DIV_ANSWER_FUNCS = {AnswerFunc.KL_DIV, AnswerFunc.JS_DIV}
