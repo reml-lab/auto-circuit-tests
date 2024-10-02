@@ -19,12 +19,12 @@ def is_notebook() -> bool:
 
 import os
 if is_notebook():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "3" #"1"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1" #"1"
     # os.environ['CUDA_LAUNCH_BLOCKING']="1"
     # os.environ['TORCH_USE_CUDA_DSA'] = "1"
 
 
-# In[2]:
+# In[ ]:
 
 
 import torch 
@@ -42,7 +42,7 @@ torch.cuda.is_available()
 # 
 # 
 
-# In[3]:
+# In[ ]:
 
 
 import os
@@ -84,7 +84,9 @@ from auto_circuit_tests.prune_algos import PruneAlgo
 from auto_circuit_tests.score_funcs import GradFunc, AnswerFunc, DIV_ANSWER_FUNCS
 # from auto_circuit_tests.faithful_metrics import FaithfulMetric
 
-from auto_circuit_tests.edge_scores import compute_edge_scores
+from auto_circuit_tests.edge_scores import (
+    compute_edge_scores, compute_full_model_score, compute_edge_act_prune_scores
+)
 from auto_circuit_tests.utils.auto_circuit_utils import (
     run_circuit_with_edge_ablated,
     run_circuit_with_edges_ablated, 
@@ -129,7 +131,7 @@ from auto_circuit_tests.utils.utils import (
 from auto_circuit_tests.utils.utils import get_exp_dir
 
 
-# In[5]:
+# In[4]:
 
 
 # config class
@@ -137,14 +139,14 @@ from dataclasses import dataclass, field
 @dataclass 
 class Config: 
     task: str = "Docstring Component Circuit" # check how many edges in component circuit (probably do all but ioi toen)
-    ablation_type: AblationType = AblationType.TOKENWISE_MEAN_CLEAN
+    ablation_type: AblationType = AblationType.RESAMPLE
     grad_func: GradFunc = GradFunc.LOGPROB
     answer_func: AnswerFunc = AnswerFunc.KL_DIV
     eval_grad_func: Optional[GradFunc] = None # TODO: used to evaluate faithfulness
-    prune_algo: PruneAlgo = PruneAlgo.ATTR_PATCH
+    prune_algo: PruneAlgo = PruneAlgo.ACT_PATCH
     eval_answer_func: Optional[AnswerFunc] = None
-    ig_samples: Optional[int] = 2
-    layerwise: bool = True
+    ig_samples: Optional[int] = None
+    layerwise: bool = False
     edge_counts: EdgeCounts = EdgeCounts.LOGARITHMIC
     tao_bases: list[float] = field(default_factory=lambda: [1, 5])
     tao_exps: list[float] = field(default_factory=lambda: list(range(-5, -1)))
@@ -173,7 +175,7 @@ class Config:
                 self.eval_answer_func = AnswerFunc.MAX_DIFF
 
 
-# In[6]:
+# In[5]:
 
 
 # initialize config 
@@ -185,7 +187,7 @@ if not is_notebook():
     conf = Config(**conf_dict)
 
 
-# In[7]:
+# In[6]:
 
 
 # handle directories
@@ -205,7 +207,7 @@ task_dir, ablation_dir, out_answer_dir, ps_dir, edge_dir, exp_dir = get_exp_dir(
 exp_dir.mkdir(parents=True, exist_ok=True)
 
 
-# In[8]:
+# In[ ]:
 
 
 # initialize task
@@ -222,7 +224,7 @@ task.init_task()
 
 # ## ACDC Prune Scores
 
-# In[9]:
+# In[8]:
 
 
 if conf.prune_algo == PruneAlgo.ACDC:
@@ -248,33 +250,33 @@ if conf.prune_algo == PruneAlgo.ACDC:
 
 # ## Circuit Probing Prune Scores
 
-# In[10]:
+# In[ ]:
 
 
 if conf.prune_algo == PruneAlgo.CIRC_PROBE and conf.answer_func == AnswerFunc.KL_DIV:
     circ_probe_ps_path = out_answer_dir / "circ_probe_prune_scores.pkl"
-    # if circ_probe_ps_path.exists():
-    #     circ_probe_prune_scores = torch.load(circ_probe_ps_path)
-    # else:
-    circ_probe_prune_scores = circuit_probing_prune_scores(
-        model=task.model, 
-        dataloader=task.train_loader, 
-        official_edges=None,
-        tree_optimisation=True,
-        faithfulness_target=conf.answer_func.value, 
-        circuit_sizes=edge_counts_util(task.model.edges, conf.edge_counts, zero_edges=False),
-        learning_rate=0.1,
-        epochs=100, 
-        regularize_lambda=0.1, 
-        show_train_graph=is_notebook(),
-    )
-    if conf.save_cache:
-        torch.save(circ_probe_prune_scores, circ_probe_ps_path)
+    if circ_probe_ps_path.exists():
+        circ_probe_prune_scores = torch.load(circ_probe_ps_path)
+    else:
+        circ_probe_prune_scores = circuit_probing_prune_scores(
+            model=task.model, 
+            dataloader=task.train_loader, 
+            official_edges=None,
+            tree_optimisation=True,
+            faithfulness_target=conf.answer_func.value, 
+            circuit_sizes=edge_counts_util(task.model.edges, conf.edge_counts, zero_edges=False),
+            learning_rate=0.1,
+            epochs=100, 
+            regularize_lambda=0.1, 
+            show_train_graph=is_notebook(),
+        )
+        if conf.save_cache:
+            torch.save(circ_probe_prune_scores, circ_probe_ps_path)
 
 
 # ## Activation Patching Prune Scores
 
-# In[11]:
+# In[ ]:
 
 
 # load from cache if exists 
@@ -292,7 +294,7 @@ else:
 
 # ##  Attribution Patching Prune Scores
 
-# In[14]:
+# In[11]:
 
 
 if conf.prune_algo == PruneAlgo.ATTR_PATCH:
@@ -322,7 +324,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH:
 
 # ##  Compare Activation and Attribution Patching
 
-# In[15]:
+# In[12]:
 
 
 if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
@@ -334,7 +336,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
 
 # ### MSE
 
-# In[16]:
+# In[13]:
 
 
 # mse and median se
@@ -361,7 +363,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
 
 # ### Spearman Rank Correlation
 
-# In[17]:
+# In[14]:
 
 
 if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
@@ -382,7 +384,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
 
 # ### Plot Rank 
 
-# In[20]:
+# In[15]:
 
 
 # get rank for scores
@@ -397,18 +399,18 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
         min_0_rank, max_0_rank = act_prune_scores_0_rank.min().item(), act_prune_scores_0_rank.max().item()
 
 
-# In[22]:
+# In[16]:
 
 
 if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     # TODO: plot x=0
     plt.scatter(act_prune_scores_rank, attr_prune_scores_rank, s=0.1)
     # plot min rank, max rank as vertical lines
-    if min_0_rank is not None:
-        plt.axvline(min_0_rank, color='blue', linestyle='--')
-        plt.axvline(max_0_rank, color='blue', linestyle='--')
-        # shade area between min and max rank
-        plt.axvspan(min_0_rank, max_0_rank, color='lightblue', alpha=0.5)
+    # if min_0_rank is not None:
+    #     plt.axvline(min_0_rank, color='blue', linestyle='--')
+    #     plt.axvline(max_0_rank, color='blue', linestyle='--')
+    #     # shade area between min and max rank
+    #     plt.axvspan(min_0_rank, max_0_rank, color='lightblue', alpha=0.5)
     
     plt.xlabel("Act Patch Rank")
     plt.ylabel("Attrib Patch Rank")
@@ -430,16 +432,17 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     max_0_rank = act_prune_scores_abs_rank[act_prune_scores_0].max().item()
 
     plt.scatter(act_prune_scores_abs_rank, attr_prune_scores_abs_rank, s=0.1)
-    # plot max rank as vertical lines
-    plt.axvline(max_0_rank, color='blue', linestyle='--')
-    # shade area between min and max rank
-    plt.axvspan(0, max_0_rank, color='lightblue', alpha=0.5)
+    # # plot max rank as vertical lines
+    # plt.axvline(max_0_rank, color='blue', linestyle='--')
+    # # shade area between min and max rank
+    # plt.axvspan(0, max_0_rank, color='lightblue', alpha=0.5)
 
     
     plt.xlabel("Act Patch Rank")
     plt.ylabel("Attrib Patch Rank")
     plt.title("Rank Correlation Abs")
     plt.savefig(ps_dir / "rank_corr_abs.png")
+    plt.show()
     plt.close()
 
 
@@ -585,6 +588,8 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     # save figure
 
     plt.savefig(ps_dir / "rank_corr_by_component.png")
+    plt.show()
+    plt.show()
     plt.close()
 
 
@@ -619,6 +624,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     plt.xscale("log")
     plt.yscale("log")
     plt.savefig(ps_dir / "act_attr_abs_scores.png")
+    plt.show()
     plt.close()
 
 
@@ -644,7 +650,7 @@ prune_scores = {mod_name: score.to(task.device) for mod_name, score in prune_sco
 sorted_prune_scores = desc_prune_scores(prune_scores)
 
 
-# In[26]:
+# In[ ]:
 
 
 # plot prune scores
@@ -661,10 +667,11 @@ def plot_prune_scores(edge_scores):
 
 fig, ax = plot_prune_scores(sorted_prune_scores.cpu().numpy().tolist())
 plt.savefig(ps_dir / "edge_scores.png")
-# plt.close()
+plt.show()
+plt.close()
 
 
-# In[27]:
+# In[ ]:
 
 
 # compute n_edges 
@@ -699,7 +706,7 @@ save_json(circ_edges, edge_dir, "n_circ_edges")
 # - frac mean difference recovered: E[score(C)] - E[score(A)] / E[score(M)] - E[score(A)] 
 # (SAE work, similar to causal scrubbing, don't need to worry about variance)
 
-# In[28]:
+# In[ ]:
 
 
 # first full model outt and ablated model out
@@ -727,7 +734,7 @@ ablated_out_test: BatchOutputs = run_fully_ablated_model(
 )
 
 
-# In[29]:
+# In[ ]:
 
 
 # next get circuit outs for each threshold
@@ -762,19 +769,7 @@ circuit_outs_test = dict(circuit_outs_test)
 # - mean difference: E[score(M)] - E[score(C)] 
 # - frac mean difference recovered: E[score(C)] - E[score(A)] / E[score(M)] - E[score(A)]
 
-# In[30]:
-
-
-[batch.key for batch in task.train_loader], [k for k in model_out_train.keys()], 
-
-
-# In[31]:
-
-
-[[k for k in out.keys()] for out in circuit_outs_train.values()]
-
-
-# In[32]:
+# In[ ]:
 
 
 faith_metric_results_train, faith_metrics_train = compute_faith_metrics(
@@ -801,7 +796,7 @@ save_json(faith_metric_results_test, edge_dir, "faith_metric_results_test")
 save_json(faith_metrics_test, edge_dir, "faith_metrics_test")
 
 
-# In[33]:
+# In[ ]:
 
 
 # faith metrics eval 
@@ -831,7 +826,7 @@ if conf.eval_answer_func is not None and conf.eval_answer_func != conf.answer_fu
 
 # ## Equivalence Tests
 
-# In[34]:
+# In[ ]:
 
 
 use_eval_metrics = conf.answer_func in DIV_ANSWER_FUNCS
@@ -869,7 +864,7 @@ save_json(equiv_test_results_test, edge_dir, "equiv_test_results_test")
 
 # ## Plot % loss recovered and Equiv Test Results Along Frac Edges / Frac Prune Scores
 
-# In[35]:
+# In[33]:
 
 
 import matplotlib.pyplot as plt
@@ -945,7 +940,7 @@ def plot_frac_loss_recovered_and_equiv_test_results(
     return fig, ax
 
 
-# In[36]:
+# In[ ]:
 
 
 # plot results using div answer function (no equivalence results)
@@ -958,10 +953,12 @@ if use_eval_metrics:
         x_label="Edges" if not conf.prune_score_thresh else "Prune Scores"
     )
     fig.savefig(edge_dir / "frac_loss_recovered_results_train.png")
+    plt.show()
     plt.close()
+   
 
 
-# In[37]:
+# In[ ]:
 
 
 # plot results using div answer function (no equivalence results)
@@ -973,14 +970,14 @@ if use_eval_metrics:
         x_label="Edges" if not conf.prune_score_thresh else "Prune Scores"
     )
     fig.savefig(edge_dir / "frac_loss_recovered_results_test.png")
+    plt.show()
     plt.close()
 
 
-# In[38]:
+# In[ ]:
 
 
 # TODO: figure out why this plotting is off
-
 fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
     faith_metric_results_train if not use_eval_metrics else faith_metric_results_train_eval, 
     equiv_test_results_train,
@@ -989,10 +986,11 @@ fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
     x_label="Edges" if not conf.prune_score_thresh else "Prune Scores"
 )
 fig.savefig(edge_dir / "frac_loss_recovered_and_equiv_test_results_train.png")
+plt.show()
 plt.close()
 
 
-# In[39]:
+# In[ ]:
 
 
 fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
@@ -1003,6 +1001,7 @@ fig, ax = plot_frac_loss_recovered_and_equiv_test_results(
     x_label="Edges" if not conf.prune_score_thresh else "Prune Scores"
 )
 fig.savefig(edge_dir / "frac_loss_recovered_and_equiv_test_results_test.png")
+plt.show()
 plt.close()
 
 
@@ -1010,13 +1009,13 @@ plt.close()
 
 # ## Find Smallest Equivalent Circuit
 
-# In[40]:
+# In[38]:
 
 
 flat_ps = flat_prune_scores_ordered(prune_scores, order=prune_scores.keys())
 
 
-# In[41]:
+# In[ ]:
 
 
 # find smallest equiv circuit on training distribution
@@ -1035,7 +1034,7 @@ edges = edges_from_mask(task.model.srcs, task.model.dests, edge_mask, task.token
 save_json([(edge.seq_idx, edge.name) for edge in  edges], edge_dir, "min_equiv_edges_train")
 
 
-# In[42]:
+# In[40]:
 
 
 valid_task = TASK_TO_OUTPUT_ANSWER_FUNCS[conf.task] == (conf.grad_func, conf.answer_func) or conf.answer_func in DIV_ANSWER_FUNCS
@@ -1044,7 +1043,7 @@ test_smallest = valid_task and len(edges) < 20_000
 
 # ## Plot Pruned Smallest Equivalent Circuit
 
-# In[43]:
+# In[41]:
 
 
 if test_smallest and not conf.prune_algo == PruneAlgo.ACDC:
@@ -1064,7 +1063,7 @@ if test_smallest and not conf.prune_algo == PruneAlgo.ACDC:
 # 
 # Note: Seems like there is some leakage, not exactly sure why, but I guess its fine, not using this anyway
 
-# In[44]:
+# In[ ]:
 
 
 if test_smallest:
@@ -1095,7 +1094,7 @@ if test_smallest:
 
 # ### Verify Pruned Smallest Circuit Still Equivalent and achieves >95% loss recovered
 
-# In[45]:
+# In[ ]:
 
 
 if test_smallest:
@@ -1127,7 +1126,7 @@ if test_smallest:
     used_edges_out = run_circuit_from_mask(used_edges_mask, task.train_loader)
 
 
-# In[46]:
+# In[ ]:
 
 
 if test_smallest:
@@ -1144,7 +1143,7 @@ if test_smallest:
     save_json(faith_metric_results_used_edges, edge_dir, "faith_metric_results_used_edges")
 
 
-# In[47]:
+# In[ ]:
 
 
 # run equiv tests on used edges
@@ -1167,7 +1166,7 @@ if test_smallest:
 
 # ## Minimality Test, Change in %loss Recovered, and Act Patch Full Model vs Circuit Correlation
 
-# In[48]:
+# In[46]:
 
 
 # only run on docstring to save time
@@ -1176,7 +1175,7 @@ run_min_test = test_smallest
 
 # ### Compute Scores after  Ablating Each Edge
 
-# In[49]:
+# In[ ]:
 
 
 if run_min_test:
@@ -1235,7 +1234,7 @@ if run_min_test:
     save_json({edge_name(k): v for k, v in edge_faith_metrics_test.items()}, edge_dir, "edge_faith_metrics_test")
 
 
-# In[51]:
+# In[ ]:
 
 
 if run_min_test:
@@ -1266,34 +1265,16 @@ if run_min_test:
     ax.legend()
 
     plt.savefig(edge_dir / "frac_loss_recovered_change.png")
+    plt.show()
     plt.close()
 
 
 # ### Compute Activation Patching Scores on Circuit and Correlation Between Activation Patching Scores on Full Model
 
-# In[52]:
+# In[50]:
 
 
 if run_min_test:
-    #TODO: make sure signs are right and mean is correct
-    from auto_circuit.prune_algos.utils import compute_loss 
-    def compute_full_model_score(
-        model: PatchableModel,
-        dataloader: PromptDataLoader,
-        model_outs: BatchOutputs,
-        grad_func: str,
-        answer_func: str,
-    ):
-        full_model_score = 0
-        for batch in dataloader:
-            full_model_score -= compute_loss(
-                model, 
-                batch, 
-                grad_func, 
-                answer_func, 
-                logits=model_outs[batch.key].to(task.device)
-            ).sum().item()
-        return full_model_score
 
     full_model_score = 0
     if conf.answer_func not in DIV_ANSWER_FUNCS:
@@ -1302,22 +1283,9 @@ if run_min_test:
             task.train_loader, 
             model_out_train, 
             conf.grad_func.value, 
-            conf.answer_func.value
+            conf.answer_func.value, 
+            task.device
         )
-
-    def compute_edge_act_prune_scores(
-        model: PatchableModel,
-        edges_scores: dict[Edge, BatchOutputs],
-        full_model_score: float,
-    ) -> PruneScores:
-        edge_prune_scores = model.new_prune_scores()
-        for mod_name in edge_prune_scores.keys():
-            edge_prune_scores[mod_name] += full_model_score
-        for edge, edge_scores in edges_scores.items():
-                edge_scores = t.cat([v for v in edge_scores.values()])
-                edge_prune_scores[edge.dest.module_name][edge.patch_idx] -= edge_scores.sum()
-        return edge_prune_scores
-
 
     # edge outs train 
     edge_circ_act_prune_scores = compute_edge_act_prune_scores(
@@ -1346,6 +1314,7 @@ if run_min_test and act_prune_scores is not None:
     plt.ylabel("Circuit Act Patch Scores")
     plt.title(f"Correlation: {corr:.2f}, p-value: {p_value:.2f}")
     plt.savefig(edge_dir / "circ_act_patch_corr.png")
+    plt.show()
     plt.close()
 
     save_json({"corr": corr, "p_value": p_value}, edge_dir, "circ_act_patch_corr_results")
@@ -1353,7 +1322,7 @@ if run_min_test and act_prune_scores is not None:
 
 # ### Minimality Test
 
-# In[54]:
+# In[52]:
 
 
 if run_min_test:
