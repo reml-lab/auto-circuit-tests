@@ -140,10 +140,10 @@ from dataclasses import dataclass, field
 class Config: 
     task: str = "Docstring Component Circuit" # check how many edges in component circuit (probably do all but ioi toen)
     ablation_type: AblationType = AblationType.RESAMPLE
-    grad_func: GradFunc = GradFunc.LOGPROB
-    answer_func: AnswerFunc = AnswerFunc.KL_DIV
+    grad_func: GradFunc = GradFunc.LOGIT
+    answer_func: AnswerFunc = AnswerFunc.MAX_DIFF
     eval_grad_func: Optional[GradFunc] = None # TODO: used to evaluate faithfulness
-    prune_algo: PruneAlgo = PruneAlgo.ACT_PATCH
+    prune_algo: PruneAlgo = PruneAlgo.ATTR_PATCH
     eval_answer_func: Optional[AnswerFunc] = None
     ig_samples: Optional[int] = None
     layerwise: bool = False
@@ -364,6 +364,55 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     print(mse_result)
 
 
+# ### Standard Pearson Correlation
+
+# In[17]:
+
+
+if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
+    from scipy import stats
+    corr, p_value = stats.pearsonr(act_prune_scores_flat.cpu(), attr_prune_scores_flat.cpu())
+    print(f"corr: {corr}, p-value: {p_value}")
+
+    save_json({
+        "corr": float(corr),
+        "p_value": float(p_value),
+    }, ps_dir, "act_attr_corr")
+    
+
+
+# ### Plot Scores
+
+# In[ ]:
+
+
+if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
+    # plot scores on x, y
+    plt.scatter(act_prune_scores_flat.cpu(), attr_prune_scores_flat.cpu(), alpha=0.25)
+    plt.xlabel("Act Patch Scores")
+    plt.ylabel("Attrib Patch Scores")
+    plt.xscale("symlog")
+    plt.yscale("symlog")
+    plt.show()
+    plt.savefig(ps_dir / "act_attr_scores.png")
+    plt.close()
+
+
+# In[ ]:
+
+
+if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
+    # plot scores on x, y
+    plt.scatter(act_prune_scores_flat.abs().cpu(), attr_prune_scores_flat.abs().cpu(), alpha=0.25)
+    plt.xlabel("Act Patch Scores")
+    plt.ylabel("Attrib Patch Scores")
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.savefig(ps_dir / "act_attr_abs_scores.png")
+    plt.show()
+    plt.close()
+
+
 # ### Spearman Rank Correlation
 
 # In[14]:
@@ -387,7 +436,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
 
 # ### Plot Rank 
 
-# In[15]:
+# In[22]:
 
 
 # get rank for scores
@@ -402,7 +451,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
         min_0_rank, max_0_rank = act_prune_scores_0_rank.min().item(), act_prune_scores_0_rank.max().item()
 
 
-# In[16]:
+# In[23]:
 
 
 if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
@@ -423,7 +472,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     # plt.close()
 
 
-# In[17]:
+# In[24]:
 
 
 # TODO: I think there must be a bug? 
@@ -451,7 +500,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
 
 # ### Compute Fraction of "Mis-Signed" Components
 
-# In[18]:
+# In[25]:
 
 
 if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
@@ -463,7 +512,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
 
 # ### Compute Fraction of Edges Recovered for Each Edge Threshold
 
-# In[19]:
+# In[26]:
 
 
 # for different edge thresholds, compute fraction of edges not included in top k
@@ -484,7 +533,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
 # 
 # We partion by Dest B/c we expect difficulties to arise from estimating effects that route through non-linearities
 
-# In[20]:
+# In[27]:
 
 
 from auto_circuit_tests.edge_graph import NodeType
@@ -507,7 +556,7 @@ def mod_name_to_layer_and_node_type(mod_name: str) -> Tuple[int, NodeType]:
     return layer, node_type
 
 
-# In[21]:
+# In[32]:
 
 
 if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
@@ -533,7 +582,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     attr_rank_by_component = prune_score_rankings_by_component(attr_prune_scores, attr_prune_scores_abs_rank, order)
 
 
-# In[22]:
+# In[36]:
 
 
 if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
@@ -560,15 +609,18 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
             if len(act_ranks) == 0 and len(attr_ranks) == 0:
                 continue
 
-            # compute rank correlation
-            corr, p_value = stats.spearmanr(act_ranks, attr_ranks)
-            rank_correlations[(layer, node_type)] = corr
+            # # compute rank correlation
+            # corr, p_value = stats.spearmanr(act_ranks, attr_ranks)
+            # rank_correlations[(layer, node_type)] = corr
             
             # Create a subplot only if there's data to plot
             ax = fig.add_subplot(len(components), (n_layers+1), (i * (n_layers+1)) + layer+1)
             ax.scatter(act_ranks, attr_ranks, s=1)
-            # set title below scatter plot
-            ax.set_title(f"Correlation: {corr:.2f}", y=-0.20)
+            # set axis range 
+            ax.set_xlim(0, task.model.n_edges)
+            ax.set_ylim(0, task.model.n_edges)
+            # # set title below scatter plot
+            # ax.set_title(f"Correlation: {corr:.2f}", y=-0.20)
 
             
             # Store the Axes object in our 2D array
@@ -597,38 +649,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
 
 
     # save rank correlations
-    save_json({str(k): v for k, v in rank_correlations.items()}, ps_dir, "rank_cor_by_component")
-
-
-# ### Plot Scores
-
-# In[23]:
-
-
-if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
-    # plot scores on x, y
-    plt.scatter(act_prune_scores_flat.cpu(), attr_prune_scores_flat.cpu(), alpha=0.25)
-    plt.xlabel("Act Patch Scores")
-    plt.ylabel("Attrib Patch Scores")
-    plt.xscale("symlog")
-    plt.yscale("symlog")
-    plt.savefig(ps_dir / "act_attr_scores.png")
-    plt.close()
-
-
-# In[24]:
-
-
-if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
-    # plot scores on x, y
-    plt.scatter(act_prune_scores_flat.abs().cpu(), attr_prune_scores_flat.abs().cpu(), alpha=0.25)
-    plt.xlabel("Act Patch Scores")
-    plt.ylabel("Attrib Patch Scores")
-    plt.xscale("log")
-    plt.yscale("log")
-    plt.savefig(ps_dir / "act_attr_abs_scores.png")
-    plt.show()
-    plt.close()
+    # save_json({str(k): v for k, v in rank_correlations.items()}, ps_dir, "rank_cor_by_component")
 
 
 # # Construt Circuits from Prune Scores 
