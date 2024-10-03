@@ -481,7 +481,7 @@ if conf.prune_algo == PruneAlgo.ATTR_PATCH and act_prune_scores is not None:
     act_prune_scores_abs_rank = get_el_rank(act_prune_scores_flat.abs().cpu())
     attr_prune_scores_abs_rank = get_el_rank(attr_prune_scores_flat.abs().cpu())
 
-    max_0_rank = act_prune_scores_abs_rank[act_prune_scores_0].max().item()
+    # max_0_rank = act_prune_scores_abs_rank[act_prune_scores_0].max().item()
 
     plt.scatter(act_prune_scores_abs_rank, attr_prune_scores_abs_rank, s=0.1)
     # # plot max rank as vertical lines
